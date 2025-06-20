@@ -10,13 +10,15 @@ use crate::{
     terminals::{SshCommand, wrap_for_ssh},
     worktree_store::WorktreeStore,
 };
-use anyhow::{Result, anyhow};
+use anyhow::{Context as _, Result, anyhow};
 use async_trait::async_trait;
 use collections::HashMap;
 use dap::{
     Capabilities, CompletionItem, CompletionsArguments, DapRegistry, DebugRequest,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, Source, StackFrameId,
-    adapters::{DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments},
+    adapters::{
+        DapDelegate, DebugAdapterBinary, DebugAdapterName, DebugTaskDefinition, TcpArguments,
+    },
     client::SessionId,
     inline_value::VariableLookupKind,
     messages::Message,
@@ -47,8 +49,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Once},
 };
-use task::{DebugScenario, SpawnInTerminal, TaskTemplate};
-use util::{ResultExt as _, merge_json_value_into};
+use task::{DebugScenario, SpawnInTerminal, TaskContext, TaskTemplate};
+use util::ResultExt as _;
 use worktree::Worktree;
 
 #[derive(Debug)]
@@ -99,7 +101,11 @@ impl DapStore {
     pub fn init(client: &AnyProtoClient, cx: &mut App) {
         static ADD_LOCATORS: Once = Once::new();
         ADD_LOCATORS.call_once(|| {
-            DapRegistry::global(cx).add_locator(Arc::new(locators::cargo::CargoLocator {}))
+            let registry = DapRegistry::global(cx);
+            registry.add_locator(Arc::new(locators::cargo::CargoLocator {}));
+            registry.add_locator(Arc::new(locators::go::GoLocator {}));
+            registry.add_locator(Arc::new(locators::node::NodeLocator));
+            registry.add_locator(Arc::new(locators::python::PythonLocator));
         });
         client.add_entity_request_handler(Self::handle_run_debug_locator);
         client.add_entity_request_handler(Self::handle_get_debug_adapter_binary);
@@ -174,15 +180,12 @@ impl DapStore {
         &mut self,
         definition: DebugTaskDefinition,
         session_id: SessionId,
+        worktree: &Entity<Worktree>,
         console: UnboundedSender<String>,
         cx: &mut Context<Self>,
     ) -> Task<Result<DebugAdapterBinary>> {
         match &self.mode {
             DapStoreMode::Local(_) => {
-                let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next()
-                else {
-                    return Task::ready(Err(anyhow!("Failed to find a worktree")));
-                };
                 let Some(adapter) = DapRegistry::global(cx).adapter(&definition.adapter) else {
                     return Task::ready(Err(anyhow!("Failed to find a debug adapter")));
                 };
@@ -193,10 +196,7 @@ impl DapStore {
                     .and_then(|s| s.binary.as_ref().map(PathBuf::from));
 
                 let delegate = self.delegate(&worktree, console, cx);
-                let cwd: Arc<Path> = definition
-                    .cwd()
-                    .unwrap_or(worktree.read(cx).abs_path().as_ref())
-                    .into();
+                let cwd: Arc<Path> = worktree.read(cx).abs_path().as_ref().into();
 
                 cx.spawn(async move |this, cx| {
                     let mut binary = adapter
@@ -226,6 +226,7 @@ impl DapStore {
                 let request = ssh.upstream_client.request(proto::GetDebugAdapterBinary {
                     session_id: session_id.to_proto(),
                     project_id: ssh.upstream_project_id,
+                    worktree_id: worktree.read(cx).id().to_proto(),
                     definition: Some(definition.to_proto()),
                 });
                 let ssh_client = ssh.ssh_client.clone();
@@ -233,23 +234,21 @@ impl DapStore {
                 cx.spawn(async move |_, cx| {
                     let response = request.await?;
                     let binary = DebugAdapterBinary::from_proto(response)?;
-                    let mut ssh_command = ssh_client.update(cx, |ssh, _| {
+                    let mut ssh_command = ssh_client.read_with(cx, |ssh, _| {
                         anyhow::Ok(SshCommand {
-                            arguments: ssh
-                                .ssh_args()
-                                .ok_or_else(|| anyhow!("SSH arguments not found"))?,
+                            arguments: ssh.ssh_args().context("SSH arguments not found")?,
                         })
                     })??;
 
                     let mut connection = None;
                     if let Some(c) = binary.connection {
-                        let local_bind_addr = Ipv4Addr::new(127, 0, 0, 1);
+                        let local_bind_addr = Ipv4Addr::LOCALHOST;
                         let port =
                             dap::transport::TcpTransport::unused_port(local_bind_addr).await?;
 
                         ssh_command.add_port_forwarding(port, c.host.to_string(), c.port);
                         connection = Some(TcpArguments {
-                            port: c.port,
+                            port,
                             host: local_bind_addr,
                             timeout: c.timeout,
                         })
@@ -257,14 +256,17 @@ impl DapStore {
 
                     let (program, args) = wrap_for_ssh(
                         &ssh_command,
-                        Some((&binary.command, &binary.arguments)),
+                        binary
+                            .command
+                            .as_ref()
+                            .map(|command| (command, &binary.arguments)),
                         binary.cwd.as_deref(),
                         binary.envs,
                         None,
                     );
 
                     Ok(DebugAdapterBinary {
-                        command: program,
+                        command: Some(program),
                         arguments: args,
                         envs: HashMap::default(),
                         cwd: None,
@@ -285,11 +287,17 @@ impl DapStore {
         adapter: DebugAdapterName,
         label: SharedString,
         cx: &mut App,
-    ) -> Option<DebugScenario> {
-        DapRegistry::global(cx)
-            .locators()
-            .values()
-            .find_map(|locator| locator.create_scenario(&build, &label, adapter.clone()))
+    ) -> Task<Option<DebugScenario>> {
+        let locators = DapRegistry::global(cx).locators();
+
+        cx.background_spawn(async move {
+            for locator in locators.values() {
+                if let Some(scenario) = locator.create_scenario(&build, &label, &adapter).await {
+                    return Some(scenario);
+                }
+            }
+            None
+        })
     }
 
     pub fn run_debug_locator(
@@ -314,10 +322,10 @@ impl DapStore {
                             return Ok(result);
                         }
 
-                        Err(anyhow!(
+                        anyhow::bail!(
                             "None of the locators for task `{}` completed successfully",
                             build_command.label
-                        ))
+                        )
                     })
                 } else {
                     Task::ready(Err(anyhow!(
@@ -354,6 +362,7 @@ impl DapStore {
         &mut self,
         label: SharedString,
         adapter: DebugAdapterName,
+        task_context: TaskContext,
         parent_session: Option<Entity<Session>>,
         cx: &mut Context<Self>,
     ) -> Entity<Session> {
@@ -371,6 +380,7 @@ impl DapStore {
             parent_session,
             label,
             adapter,
+            task_context,
             cx,
         );
 
@@ -397,12 +407,9 @@ impl DapStore {
         &self,
         session: Entity<Session>,
         definition: DebugTaskDefinition,
+        worktree: Entity<Worktree>,
         cx: &mut Context<Self>,
     ) -> Task<Result<()>> {
-        let Some(worktree) = self.worktree_store.read(cx).visible_worktrees(cx).next() else {
-            return Task::ready(Err(anyhow!("Failed to find a worktree")));
-        };
-
         let dap_store = cx.weak_entity();
         let console = session.update(cx, |session, cx| session.console_output(cx));
         let session_id = session.read(cx).session_id();
@@ -410,16 +417,17 @@ impl DapStore {
         cx.spawn({
             let session = session.clone();
             async move |this, cx| {
-                let mut binary = this
+                let binary = this
                     .update(cx, |this, cx| {
-                        this.get_debug_adapter_binary(definition.clone(), session_id, console, cx)
+                        this.get_debug_adapter_binary(
+                            definition.clone(),
+                            session_id,
+                            &worktree,
+                            console,
+                            cx,
+                        )
                     })?
                     .await?;
-
-                if let Some(args) = definition.initialize_args {
-                    merge_json_value_into(args, &mut binary.request_args.configuration);
-                }
-
                 session
                     .update(cx, |session, cx| {
                         session.boot(binary, worktree, dap_store, cx)
@@ -488,14 +496,14 @@ impl DapStore {
         worktree: &Entity<Worktree>,
         console: UnboundedSender<String>,
         cx: &mut App,
-    ) -> DapAdapterDelegate {
+    ) -> Arc<dyn DapDelegate> {
         let Some(local_store) = self.as_local() else {
             unimplemented!("Starting session on remote side");
         };
 
-        DapAdapterDelegate::new(
+        Arc::new(DapAdapterDelegate::new(
             local_store.fs.clone(),
-            worktree.read(cx).id(),
+            worktree.read(cx).snapshot(),
             console,
             local_store.node_runtime.clone(),
             local_store.http_client.clone(),
@@ -503,7 +511,7 @@ impl DapStore {
             local_store.environment.update(cx, |env, cx| {
                 env.get_worktree_environment(worktree.clone(), cx)
             }),
-        )
+        ))
     }
 
     pub fn evaluate(
@@ -580,7 +588,12 @@ impl DapStore {
             const LIMIT: usize = 100;
 
             if value.len() > LIMIT {
-                value.truncate(LIMIT);
+                let mut index = LIMIT;
+                // If index isn't a char boundary truncate will cause a panic
+                while !value.is_char_boundary(index) {
+                    index -= 1;
+                }
+                value.truncate(index);
                 value.push_str("...");
             }
 
@@ -616,7 +629,7 @@ impl DapStore {
                         });
                     }
                     VariableLookupKind::Expression => {
-                        let Ok(eval_task) = session.update(cx, |session, _| {
+                        let Ok(eval_task) = session.read_with(cx, |session, _| {
                             session.mode.request_dap(EvaluateCommand {
                                 expression: inline_value_location.variable_name.clone(),
                                 frame_id: Some(stack_frame_id),
@@ -695,6 +708,8 @@ impl DapStore {
 
         let shutdown_task = session.update(cx, |this, cx| this.shutdown(cx));
 
+        cx.emit(DapStoreEvent::DebugClientShutdown(session_id));
+
         cx.background_spawn(async move {
             if shutdown_children.len() > 0 {
                 let _ = join_all(shutdown_children).await;
@@ -733,7 +748,7 @@ impl DapStore {
         let task = envelope
             .payload
             .build_command
-            .ok_or_else(|| anyhow!("missing definition"))?;
+            .context("missing definition")?;
         let build_task = SpawnInTerminal::from_proto(task);
         let locator = envelope.payload.locator;
         let request = this
@@ -751,10 +766,7 @@ impl DapStore {
         mut cx: AsyncApp,
     ) -> Result<proto::DebugAdapterBinary> {
         let definition = DebugTaskDefinition::from_proto(
-            envelope
-                .payload
-                .definition
-                .ok_or_else(|| anyhow!("missing definition"))?,
+            envelope.payload.definition.context("missing definition")?,
         )?;
         let (tx, mut rx) = mpsc::unbounded();
         let session_id = envelope.payload.session_id;
@@ -762,7 +774,7 @@ impl DapStore {
             let this = this.clone();
             async move |cx| {
                 while let Some(message) = rx.next().await {
-                    this.update(cx, |this, _| {
+                    this.read_with(cx, |this, _| {
                         if let Some((downstream, project_id)) = this.downstream_client.clone() {
                             downstream
                                 .send(proto::LogToDebugConsole {
@@ -779,9 +791,22 @@ impl DapStore {
         })
         .detach();
 
+        let worktree = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .read(cx)
+                    .worktree_for_id(WorktreeId::from_proto(envelope.payload.worktree_id), cx)
+            })?
+            .context("Failed to find worktree with a given ID")?;
         let binary = this
             .update(&mut cx, |this, cx| {
-                this.get_debug_adapter_binary(definition, SessionId::from_proto(session_id), tx, cx)
+                this.get_debug_adapter_binary(
+                    definition,
+                    SessionId::from_proto(session_id),
+                    &worktree,
+                    tx,
+                    cx,
+                )
             })?
             .await?;
         Ok(binary.to_proto())
@@ -811,7 +836,7 @@ impl DapStore {
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     console: mpsc::UnboundedSender<String>,
-    worktree_id: WorktreeId,
+    worktree: worktree::Snapshot,
     node_runtime: NodeRuntime,
     http_client: Arc<dyn HttpClient>,
     toolchain_store: Arc<dyn LanguageToolchainStore>,
@@ -821,7 +846,7 @@ pub struct DapAdapterDelegate {
 impl DapAdapterDelegate {
     pub fn new(
         fs: Arc<dyn Fs>,
-        worktree_id: WorktreeId,
+        worktree: worktree::Snapshot,
         status: mpsc::UnboundedSender<String>,
         node_runtime: NodeRuntime,
         http_client: Arc<dyn HttpClient>,
@@ -831,7 +856,7 @@ impl DapAdapterDelegate {
         Self {
             fs,
             console: status,
-            worktree_id,
+            worktree,
             http_client,
             node_runtime,
             toolchain_store,
@@ -840,12 +865,15 @@ impl DapAdapterDelegate {
     }
 }
 
-#[async_trait(?Send)]
+#[async_trait]
 impl dap::adapters::DapDelegate for DapAdapterDelegate {
     fn worktree_id(&self) -> WorktreeId {
-        self.worktree_id
+        self.worktree.id()
     }
 
+    fn worktree_root_path(&self) -> &Path {
+        &self.worktree.abs_path()
+    }
     fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
@@ -862,8 +890,10 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
         self.console.unbounded_send(msg).ok();
     }
 
-    fn which(&self, command: &OsStr) -> Option<PathBuf> {
-        which::which(command).ok()
+    async fn which(&self, command: &OsStr) -> Option<PathBuf> {
+        let worktree_abs_path = self.worktree.abs_path();
+        let shell_path = self.shell_env().await.get("PATH").cloned();
+        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {
@@ -873,5 +903,17 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
         self.toolchain_store.clone()
+    }
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        let entry = self
+            .worktree
+            .entry_for_path(&path)
+            .with_context(|| format!("no worktree entry for path {path:?}"))?;
+        let abs_path = self
+            .worktree
+            .absolutize(&entry.path)
+            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+
+        self.fs.load(&abs_path).await
     }
 }

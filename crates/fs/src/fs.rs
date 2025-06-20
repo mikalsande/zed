@@ -360,7 +360,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -373,7 +373,7 @@ impl Fs for RealFs {
             if options.ignore_if_exists {
                 return Ok(());
             } else {
-                return Err(anyhow!("{target:?} already exists"));
+                anyhow::bail!("{target:?} already exists");
             }
         }
 
@@ -538,7 +538,7 @@ impl Fs for RealFs {
             }?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .await?;
 
@@ -568,7 +568,7 @@ impl Fs for RealFs {
                 temp_file_path
             };
             atomic_replace(path.as_path(), temp_file.as_path())?;
-            Ok::<(), anyhow::Error>(())
+            anyhow::Ok(())
         })
         .await?;
         Ok(())
@@ -597,7 +597,9 @@ impl Fs for RealFs {
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
-        Ok(smol::fs::canonicalize(path).await?)
+        Ok(smol::fs::canonicalize(path)
+            .await
+            .with_context(|| format!("canonicalizing {path:?}"))?)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -672,7 +674,7 @@ impl Fs for RealFs {
     ) -> Result<Pin<Box<dyn Send + Stream<Item = Result<PathBuf>>>>> {
         let result = smol::fs::read_dir(path).await?.map(|entry| match entry {
             Ok(entry) => Ok(entry.path()),
-            Err(error) => Err(anyhow!("failed to read dir entry {:?}", error)),
+            Err(error) => Err(anyhow!("failed to read dir entry {error:?}")),
         });
         Ok(Box::pin(result))
     }
@@ -895,6 +897,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    path_write_counts: std::collections::HashMap<PathBuf, usize>,
     moves: std::collections::HashMap<u64, PathBuf>,
     home_dir: Option<PathBuf>,
 }
@@ -942,7 +945,7 @@ impl FakeFsState {
             .ok_or_else(|| {
                 anyhow!(io::Error::new(
                     io::ErrorKind::NotFound,
-                    format!("not found: {}", target.display())
+                    format!("not found: {target:?}")
                 ))
             })?
             .0)
@@ -1012,9 +1015,7 @@ impl FakeFsState {
         Fn: FnOnce(btree_map::Entry<String, Arc<Mutex<FakeFsEntry>>>) -> Result<T>,
     {
         let path = normalize_path(path);
-        let filename = path
-            .file_name()
-            .ok_or_else(|| anyhow!("cannot overwrite the root"))?;
+        let filename = path.file_name().context("cannot overwrite the root")?;
         let parent_path = path.parent().unwrap();
 
         let parent = self.read_path(parent_path)?;
@@ -1083,6 +1084,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                path_write_counts: Default::default(),
                 moves: Default::default(),
                 home_dir: None,
             })),
@@ -1173,6 +1175,8 @@ impl FakeFs {
         recreate_inode: bool,
     ) -> Result<()> {
         let mut state = self.state.lock();
+        let path_buf = path.as_ref().to_path_buf();
+        *state.path_write_counts.entry(path_buf).or_insert(0) += 1;
         let new_inode = state.get_and_increment_inode();
         let new_mtime = state.get_and_increment_mtime();
         let new_len = new_content.len() as u64;
@@ -1352,7 +1356,7 @@ impl FakeFs {
                     let path = std::str::from_utf8(content)
                         .ok()
                         .and_then(|content| content.strip_prefix("gitdir:"))
-                        .ok_or_else(|| anyhow!("not a valid gitfile"))?
+                        .context("not a valid gitfile")?
                         .trim();
                     git_dir_path.insert(normalize_path(&dot_git.parent().unwrap().join(path)))
                 }
@@ -1394,7 +1398,7 @@ impl FakeFs {
 
             Ok(result)
         } else {
-            Err(anyhow!("not a valid git repository"))
+            anyhow::bail!("not a valid git repository");
         }
     }
 
@@ -1456,7 +1460,12 @@ impl FakeFs {
         .unwrap();
     }
 
-    pub fn set_head_for_repo(&self, dot_git: &Path, head_state: &[(RepoPath, String)]) {
+    pub fn set_head_for_repo(
+        &self,
+        dot_git: &Path,
+        head_state: &[(RepoPath, String)],
+        sha: impl Into<String>,
+    ) {
         self.with_git_state(dot_git, true, |state| {
             state.head_contents.clear();
             state.head_contents.extend(
@@ -1464,6 +1473,7 @@ impl FakeFs {
                     .iter()
                     .map(|(path, content)| (path.clone(), content.clone())),
             );
+            state.refs.insert("HEAD".into(), sha.into());
         })
         .unwrap();
     }
@@ -1721,6 +1731,17 @@ impl FakeFs {
         self.state.lock().metadata_call_count
     }
 
+    /// How many write operations have been issued for a specific path.
+    pub fn write_count_for_path(&self, path: impl AsRef<Path>) -> usize {
+        let path = path.as_ref().to_path_buf();
+        self.state
+            .lock()
+            .path_write_counts
+            .get(&path)
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn simulate_random_delay(&self) -> impl futures::Future<Output = ()> {
         self.executor.simulate_random_delay()
     }
@@ -1744,7 +1765,7 @@ impl FakeFsEntry {
         if let Self::File { content, .. } = self {
             Ok(content)
         } else {
-            Err(anyhow!("not a file: {}", path.display()))
+            anyhow::bail!("not a file: {path:?}");
         }
     }
 
@@ -1755,7 +1776,7 @@ impl FakeFsEntry {
         if let Self::Dir { entries, .. } = self {
             Ok(entries)
         } else {
-            Err(anyhow!("not a directory: {}", path.display()))
+            anyhow::bail!("not a directory: {path:?}");
         }
     }
 }
@@ -1867,7 +1888,7 @@ impl Fs for FakeFs {
                         kind = Some(PathEventKind::Changed);
                         *e.get_mut() = file;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", path.display()));
+                        anyhow::bail!("path already exists: {path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -1941,7 +1962,7 @@ impl Fs for FakeFs {
             if let btree_map::Entry::Occupied(e) = e {
                 Ok(e.get().clone())
             } else {
-                Err(anyhow!("path does not exist: {}", &old_path.display()))
+                anyhow::bail!("path does not exist: {old_path:?}")
             }
         })?;
 
@@ -1959,7 +1980,7 @@ impl Fs for FakeFs {
                     if options.overwrite {
                         *e.get_mut() = moved_entry;
                     } else if !options.ignore_if_exists {
-                        return Err(anyhow!("path already exists: {}", new_path.display()));
+                        anyhow::bail!("path already exists: {new_path:?}");
                     }
                 }
                 btree_map::Entry::Vacant(e) => {
@@ -2003,7 +2024,7 @@ impl Fs for FakeFs {
                     kind = Some(PathEventKind::Changed);
                     Ok(Some(e.get().clone()))
                 } else if !options.ignore_if_exists {
-                    return Err(anyhow!("{target:?} already exists"));
+                    anyhow::bail!("{target:?} already exists");
                 } else {
                     Ok(None)
                 }
@@ -2027,10 +2048,8 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
-        let base_name = path.file_name().unwrap();
+        let parent_path = path.parent().context("cannot remove the root")?;
+        let base_name = path.file_name().context("cannot remove the root")?;
 
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2042,7 +2061,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2050,7 +2069,7 @@ impl Fs for FakeFs {
                     let mut entry = e.get().lock();
                     let children = entry.dir_entries(&path)?;
                     if !options.recursive && !children.is_empty() {
-                        return Err(anyhow!("{path:?} is not empty"));
+                        anyhow::bail!("{path:?} is not empty");
                     }
                 }
                 e.remove();
@@ -2064,9 +2083,7 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
 
         let path = normalize_path(path);
-        let parent_path = path
-            .parent()
-            .ok_or_else(|| anyhow!("cannot remove the root"))?;
+        let parent_path = path.parent().context("cannot remove the root")?;
         let base_name = path.file_name().unwrap();
         let mut state = self.state.lock();
         let parent_entry = state.read_path(parent_path)?;
@@ -2077,7 +2094,7 @@ impl Fs for FakeFs {
         match entry {
             btree_map::Entry::Vacant(_) => {
                 if !options.ignore_if_not_exists {
-                    return Err(anyhow!("{path:?} does not exist"));
+                    anyhow::bail!("{path:?} does not exist");
                 }
             }
             btree_map::Entry::Occupied(e) => {
@@ -2148,11 +2165,10 @@ impl Fs for FakeFs {
         let path = normalize_path(path);
         self.simulate_random_delay().await;
         let state = self.state.lock();
-        if let Some((_, canonical_path)) = state.try_read_path(&path, true) {
-            Ok(canonical_path)
-        } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
-        }
+        let (_, canonical_path) = state
+            .try_read_path(&path, true)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        Ok(canonical_path)
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -2220,15 +2236,14 @@ impl Fs for FakeFs {
         self.simulate_random_delay().await;
         let path = normalize_path(path);
         let state = self.state.lock();
-        if let Some((entry, _)) = state.try_read_path(&path, false) {
-            let entry = entry.lock();
-            if let FakeFsEntry::Symlink { target } = &*entry {
-                Ok(target.clone())
-            } else {
-                Err(anyhow!("not a symlink: {}", path.display()))
-            }
+        let (entry, _) = state
+            .try_read_path(&path, false)
+            .with_context(|| format!("path does not exist: {path:?}"))?;
+        let entry = entry.lock();
+        if let FakeFsEntry::Symlink { target } = &*entry {
+            Ok(target.clone())
         } else {
-            Err(anyhow!("path does not exist: {}", path.display()))
+            anyhow::bail!("not a symlink: {path:?}")
         }
     }
 
@@ -2403,7 +2418,7 @@ pub async fn copy_recursive<'a>(
                 if options.ignore_if_exists {
                     continue;
                 } else {
-                    return Err(anyhow!("{target_item:?} already exists"));
+                    anyhow::bail!("{target_item:?} already exists");
                 }
             }
             let _ = fs
@@ -2443,7 +2458,7 @@ fn read_recursive<'a>(
         let metadata = fs
             .metadata(source)
             .await?
-            .ok_or_else(|| anyhow!("path does not exist: {}", source.display()))?;
+            .with_context(|| format!("path does not exist: {source:?}"))?;
 
         if metadata.is_dir {
             output.push((source.to_path_buf(), true));

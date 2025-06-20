@@ -1,4 +1,4 @@
-use anyhow::{Context as _, Result, anyhow};
+use anyhow::{Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
@@ -107,7 +107,7 @@ impl super::LspAdapter for GoLspAdapter {
                         delegate.show_notification(NOTIFICATION_MESSAGE, cx);
                     })?
                 }
-                return Err(anyhow!("cannot install gopls"));
+                anyhow::bail!("cannot install gopls");
             }
             Ok(())
         }))
@@ -167,10 +167,9 @@ impl super::LspAdapter for GoLspAdapter {
                 String::from_utf8_lossy(&install_output.stdout),
                 String::from_utf8_lossy(&install_output.stderr)
             );
-
-            return Err(anyhow!(
+            anyhow::bail!(
                 "failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."
-            ));
+            );
         }
 
         let installed_binary_path = gobin_dir.join(BINARY);
@@ -411,15 +410,12 @@ async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServ
             }
         }
 
-        if let Some(path) = last_binary_path {
-            Ok(LanguageServerBinary {
-                path,
-                arguments: server_binary_arguments(),
-                env: None,
-            })
-        } else {
-            Err(anyhow!("no cached binary"))
-        }
+        let path = last_binary_path.context("no cached binary")?;
+        anyhow::Ok(LanguageServerBinary {
+            path,
+            arguments: server_binary_arguments(),
+            env: None,
+        })
     })
     .await
     .log_err()
@@ -448,12 +444,13 @@ impl ContextProvider for GoContextProvider {
     fn build_context(
         &self,
         variables: &TaskVariables,
-        location: &Location,
+        location: ContextLocation<'_>,
         _: Option<HashMap<String, String>>,
         _: Arc<dyn LanguageToolchainStore>,
         cx: &mut gpui::App,
     ) -> Task<Result<TaskVariables>> {
         let local_abs_path = location
+            .file_location
             .buffer
             .read(cx)
             .file()
@@ -513,9 +510,10 @@ impl ContextProvider for GoContextProvider {
 
     fn associated_tasks(
         &self,
-        _: Option<Arc<dyn language::File>>,
+        _: Arc<dyn Fs>,
+        _: Option<Arc<dyn File>>,
         _: &App,
-    ) -> Option<TaskTemplates> {
+    ) -> Task<Option<TaskTemplates>> {
         let package_cwd = if GO_PACKAGE_TASK_VARIABLE.template_value() == "." {
             None
         } else {
@@ -523,7 +521,7 @@ impl ContextProvider for GoContextProvider {
         };
         let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
-        Some(TaskTemplates(vec![
+        Task::ready(Some(TaskTemplates(vec![
             TaskTemplate {
                 label: format!(
                     "go test {} -run {}",
@@ -634,7 +632,7 @@ impl ContextProvider for GoContextProvider {
                 cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
-        ]))
+        ])))
     }
 }
 

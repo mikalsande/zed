@@ -41,7 +41,7 @@ use util::{ResultExt as _, paths::PathMatcher};
 use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, SaveOptions},
     searchable::{Direction, SearchableItem, SearchableItemHandle},
 };
 
@@ -164,7 +164,7 @@ pub fn init(cx: &mut App) {
     .detach();
 }
 
-fn is_contains_uppercase(str: &str) -> bool {
+fn contains_uppercase(str: &str) -> bool {
     str.chars().any(|c| c.is_uppercase())
 }
 
@@ -324,24 +324,24 @@ impl ProjectSearch {
                     }
                 }
 
-                let excerpts = project_search
-                    .update(cx, |project_search, _| project_search.excerpts.clone())
-                    .ok()?;
-                let mut new_ranges = excerpts
-                    .update(cx, |excerpts, cx| {
-                        buffers_with_ranges
-                            .into_iter()
-                            .map(|(buffer, ranges)| {
-                                excerpts.set_anchored_excerpts_for_path(
-                                    buffer,
-                                    ranges,
-                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                    cx,
-                                )
-                            })
-                            .collect::<FuturesOrdered<_>>()
+                let mut new_ranges = project_search
+                    .update(cx, |project_search, cx| {
+                        project_search.excerpts.update(cx, |excerpts, cx| {
+                            buffers_with_ranges
+                                .into_iter()
+                                .map(|(buffer, ranges)| {
+                                    excerpts.set_anchored_excerpts_for_path(
+                                        buffer,
+                                        ranges,
+                                        editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                        cx,
+                                    )
+                                })
+                                .collect::<FuturesOrdered<_>>()
+                        })
                     })
                     .ok()?;
+
                 while let Some(new_ranges) = new_ranges.next().await {
                     project_search
                         .update(cx, |project_search, _| {
@@ -530,13 +530,13 @@ impl Item for ProjectSearchView {
 
     fn save(
         &mut self,
-        format: bool,
+        options: SaveOptions,
         project: Entity<Project>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Task<anyhow::Result<()>> {
         self.results_editor
-            .update(cx, |editor, cx| editor.save(format, project, window, cx))
+            .update(cx, |editor, cx| editor.save(options, project, window, cx))
     }
 
     fn save_as(
@@ -767,7 +767,7 @@ impl ProjectSearchView {
                         let query = this.search_query_text(cx);
                         if !query.is_empty()
                             && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                                != is_contains_uppercase(&query)
+                                != contains_uppercase(&query)
                         {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
@@ -1031,6 +1031,12 @@ impl ProjectSearchView {
                     .update(cx, |editor, cx| editor.set_text(included_files, window, cx));
                 search.filters_enabled = true;
             }
+            if let Some(excluded_files) = action.excluded_files.as_deref() {
+                search
+                    .excluded_files_editor
+                    .update(cx, |editor, cx| editor.set_text(excluded_files, window, cx));
+                search.filters_enabled = true;
+            }
             search.focus_query_editor(window, cx)
         });
     }
@@ -1055,10 +1061,18 @@ impl ProjectSearchView {
 
         let is_dirty = self.is_dirty(cx);
 
-        let should_confirm_save = !will_autosave && is_dirty;
-
         cx.spawn_in(window, async move |this, cx| {
-            let should_search = if should_confirm_save {
+            let skip_save_on_close = this
+                .read_with(cx, |this, cx| {
+                    this.workspace.read_with(cx, |workspace, cx| {
+                        workspace::Pane::skip_save_on_close(&this.results_editor, workspace, cx)
+                    })
+                })?
+                .unwrap_or(false);
+
+            let should_prompt_to_save = !skip_save_on_close && !will_autosave && is_dirty;
+
+            let should_search = if should_prompt_to_save {
                 let options = &["Save", "Don't Save", "Cancel"];
                 let result_channel = this.update_in(cx, |_, window, cx| {
                     window.prompt(
@@ -1072,9 +1086,19 @@ impl ProjectSearchView {
                 let result = result_channel.await?;
                 let should_save = result == 0;
                 if should_save {
-                    this.update_in(cx, |this, window, cx| this.save(true, project, window, cx))?
-                        .await
-                        .log_err();
+                    this.update_in(cx, |this, window, cx| {
+                        this.save(
+                            SaveOptions {
+                                format: true,
+                                autosave: false,
+                            },
+                            project,
+                            window,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .log_err();
                 }
                 let should_search = result != 2;
                 should_search
@@ -1299,7 +1323,7 @@ impl ProjectSearchView {
         if EditorSettings::get_global(cx).use_smartcase_search
             && !query.is_empty()
             && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
-                != is_contains_uppercase(query)
+                != contains_uppercase(query)
         {
             self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
@@ -1353,7 +1377,7 @@ impl ProjectSearchView {
                 }
                 editor.highlight_background::<Self>(
                     &match_ranges,
-                    |theme| theme.search_match_background,
+                    |theme| theme.colors().search_match_background,
                     cx,
                 );
             });
@@ -4005,7 +4029,7 @@ pub mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 assert_eq!(workspace.active_pane(), &first_pane);
-                first_pane.update(cx, |this, _| {
+                first_pane.read_with(cx, |this, _| {
                     assert_eq!(this.active_item_index(), 1);
                     assert_eq!(this.items_len(), 2);
                 });
@@ -4189,7 +4213,7 @@ pub mod tests {
         });
         cx.run_until_parked();
         let project_search_view = pane
-            .update(&mut cx, |pane, _| {
+            .read_with(&mut cx, |pane, _| {
                 pane.active_item()
                     .and_then(|item| item.downcast::<ProjectSearchView>())
             })

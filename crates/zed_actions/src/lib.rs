@@ -53,6 +53,7 @@ pub enum ExtensionCategoryFilter {
     SlashCommands,
     IndexedDocsProviders,
     Snippets,
+    DebugAdapters,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
@@ -111,6 +112,12 @@ impl_actions!(
     ]
 );
 
+pub mod dev {
+    use gpui::actions;
+
+    actions!(dev, [ToggleInspector]);
+}
+
 pub mod workspace {
     use gpui::action_with_deprecated_aliases;
 
@@ -146,6 +153,12 @@ pub mod jj {
     use gpui::actions;
 
     actions!(jj, [BookmarkList]);
+}
+
+pub mod toast {
+    use gpui::actions;
+
+    actions!(toast, [RunAction]);
 }
 
 pub mod command_palette {
@@ -236,6 +249,12 @@ pub mod assistant {
     impl_actions!(assistant, [InlineAssist]);
 }
 
+pub mod debugger {
+    use gpui::actions;
+
+    actions!(debugger, [OpenOnboardingModal, ResetOnboarding]);
+}
+
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OpenRecent {
@@ -243,8 +262,16 @@ pub struct OpenRecent {
     pub create_new_window: bool,
 }
 
-impl_actions!(projects, [OpenRecent]);
-actions!(projects, [OpenRemote]);
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OpenRemote {
+    #[serde(default)]
+    pub from_existing_connection: bool,
+    #[serde(default)]
+    pub create_new_window: bool,
+}
+
+impl_actions!(projects, [OpenRecent, OpenRemote]);
 
 /// Where to spawn the task in the UI.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -327,3 +354,13 @@ pub mod outline {
 
 actions!(zed_predict_onboarding, [OpenZedPredictOnboarding]);
 actions!(git_onboarding, [OpenGitIntegrationOnboarding]);
+
+actions!(debug_panel, [ToggleFocus]);
+actions!(
+    debugger,
+    [
+        ToggleEnableBreakpoint,
+        UnsetBreakpoint,
+        OpenProjectDebugTasks,
+    ]
+);
