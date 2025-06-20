@@ -19,7 +19,7 @@
       "cmd-shift-g": ["editor::SelectPrevious", { "replace_newest": true }],
       "ctrl-shift-down": "editor::AddSelectionBelow",
       "ctrl-shift-up": "editor::AddSelectionAbove",
-      "cmd-shift-backspace": "editor::DeleteToBeginningOfLine",
+      "cmd-shift-backspace": ["editor::DeleteToBeginningOfLine", { "stop_at_indent": true }],
       "cmd-k cmd-u": "editor::ConvertToUpperCase",
       "cmd-k cmd-l": "editor::ConvertToLowerCase",
       "alt-enter": "editor::Newline",

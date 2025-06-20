@@ -67,7 +67,7 @@
       "ctrl-y": "editor::KillRingYank",
       "cmd-k cmd-q": "editor::Rewrap",
       "cmd-k q": "editor::Rewrap",
-      "cmd-backspace": "editor::DeleteToBeginningOfLine",
+      "cmd-backspace": ["editor::DeleteToBeginningOfLine", { "stop_at_indent": true }],
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
