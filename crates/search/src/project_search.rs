@@ -208,6 +208,7 @@ pub struct ProjectSearchView {
     included_opened_only: bool,
     regex_language: Option<Arc<Language>>,
     _subscriptions: Vec<Subscription>,
+    query_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -876,6 +877,7 @@ impl ProjectSearchView {
             included_opened_only: false,
             regex_language: None,
             _subscriptions: subscriptions,
+            query_error: None,
         };
         this.entity_changed(window, cx);
         this
@@ -1209,6 +1211,7 @@ impl ProjectSearchView {
                     if should_unmark_error {
                         cx.notify();
                     }
+                    self.query_error = None;
 
                     Some(query)
                 }
@@ -1217,6 +1220,7 @@ impl ProjectSearchView {
                     if should_mark_error {
                         cx.notify();
                     }
+                    self.query_error = Some(e.to_string());
 
                     None
                 }
@@ -1945,6 +1949,7 @@ impl Render for ProjectSearchBar {
         let input_width = SearchInputWidth::calc_width(container_width);
 
         enum BaseStyle {
+            NoInput,
             SingleInput,
             MultipleInputs,
         }
@@ -1953,6 +1958,7 @@ impl Render for ProjectSearchBar {
             h_flex()
                 .min_w_32()
                 .map(|div| match base_style {
+                    BaseStyle::NoInput => div,
                     BaseStyle::SingleInput => div.w(input_width),
                     BaseStyle::MultipleInputs => div.flex_grow(),
                 })
@@ -1965,6 +1971,12 @@ impl Render for ProjectSearchBar {
                 .rounded_lg()
         };
 
+        let query_error = self
+            .active_project_search
+            .as_ref()
+            .map(|search| search.read(cx).query_error.clone())
+            .unwrap_or_default();
+
         let query_column = input_base_styles(BaseStyle::SingleInput)
             .on_action(cx.listener(|this, action, window, cx| this.confirm(action, window, cx)))
             .on_action(cx.listener(|this, action, window, cx| {
@@ -1973,7 +1985,11 @@ impl Render for ProjectSearchBar {
             .on_action(
                 cx.listener(|this, action, window, cx| this.next_history_query(action, window, cx)),
             )
+            .id("query_editor")
             .child(self.render_text_input(&search.query_editor, cx))
+            .when_some(query_error.clone(), |this, error| {
+                this.tooltip(Tooltip::text(format!("Query error: {}", error,)))
+            })
             .child(
                 h_flex()
                     .gap_1()
@@ -2291,6 +2307,32 @@ impl Render for ProjectSearchBar {
             key_context.add("in_replace");
         }
 
+        let query_error_line = query_error.map(|error| {
+            h_flex().gap_2().child(
+                input_base_styles(BaseStyle::NoInput)
+                    .h_flex()
+                    .child(
+                        IconButton::new("query-error-button", IconName::Close)
+                            .size(ButtonSize::Default)
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                if let Some(search_view) = &this.active_project_search {
+                                    search_view.update(cx, |search_view, cx| {
+                                        search_view.query_error = None;
+                                        cx.notify();
+                                    });
+                                }
+                            })),
+                    )
+                    .gap_1()
+                    .child(
+                        Label::new(error.clone())
+                            .size(LabelSize::Default)
+                            .color(Color::Error),
+                    )
+                    .gap_2(),
+            )
+        });
+
         v_flex()
             .py(px(1.0))
             .key_context(key_context)
@@ -2342,6 +2384,7 @@ impl Render for ProjectSearchBar {
             .gap_2()
             .w_full()
             .child(search_line)
+            .children(query_error_line)
             .children(replace_line)
             .children(filter_line)
     }

@@ -101,7 +101,7 @@ pub struct BufferSearchBar {
     search_options: SearchOptions,
     default_options: SearchOptions,
     configured_options: SearchOptions,
-    query_contains_error: bool,
+    query_error: Option<String>,
     dismissed: bool,
     search_history: SearchHistory,
     search_history_cursor: SearchHistoryCursor,
@@ -217,7 +217,7 @@ impl Render for BufferSearchBar {
         if in_replace {
             key_context.add("in_replace");
         }
-        let editor_border = if self.query_contains_error {
+        let editor_border = if self.query_error.is_some() {
             Color::Error.color(cx)
         } else {
             cx.theme().colors().border
@@ -226,10 +226,18 @@ impl Render for BufferSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let input_base_styles = || {
+        enum BaseStyle {
+            NoInput,
+            SingleInput,
+        }
+
+        let input_base_styles = |base_style: BaseStyle| {
             h_flex()
                 .min_w_32()
-                .w(input_width)
+                .map(|div| match base_style {
+                    BaseStyle::NoInput => div,
+                    BaseStyle::SingleInput => div.w(input_width),
+                })
                 .h_8()
                 .pl_2()
                 .pr_1()
@@ -245,7 +253,7 @@ impl Render for BufferSearchBar {
                 el.child(Label::new("Find in results").color(Color::Hint))
             })
             .child(
-                input_base_styles()
+                input_base_styles(BaseStyle::SingleInput)
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
                     .child(self.render_text_input(&self.query_editor, color_override, cx))
@@ -285,6 +293,9 @@ impl Render for BufferSearchBar {
                                     )
                                 })),
                         )
+                    })
+                    .when_some(self.query_error.as_ref(), |this, error| {
+                        this.tooltip(Tooltip::text(format!("Query error: {}", error)))
                     }),
             )
             .child(
@@ -419,11 +430,13 @@ impl Render for BufferSearchBar {
         let replace_line = should_show_replace_input.then(|| {
             h_flex()
                 .gap_2()
-                .child(input_base_styles().child(self.render_text_input(
-                    &self.replacement_editor,
-                    None,
-                    cx,
-                )))
+                .child(
+                    input_base_styles(BaseStyle::SingleInput).child(self.render_text_input(
+                        &self.replacement_editor,
+                        None,
+                        cx,
+                    )),
+                )
                 .child(
                     h_flex()
                         .min_w_64()
@@ -467,6 +480,28 @@ impl Render for BufferSearchBar {
                                 })),
                         ),
                 )
+        });
+
+        let query_error_line = self.query_error.as_ref().map(|error| {
+            h_flex().gap_2().child(
+                input_base_styles(BaseStyle::NoInput)
+                    .h_flex()
+                    .child(
+                        IconButton::new("query-error-button", IconName::Close)
+                            .size(ButtonSize::Default)
+                            .on_click(cx.listener(|this, _event, _window, cx| {
+                                this.query_error = None;
+                                cx.notify();
+                            })),
+                    )
+                    .gap_1()
+                    .child(
+                        Label::new(error.clone())
+                            .size(LabelSize::Default)
+                            .color(Color::Error),
+                    )
+                    .gap_2(),
+            )
         });
 
         v_flex()
@@ -524,6 +559,7 @@ impl Render for BufferSearchBar {
                     .w_full()
                 },
             ))
+            .children(query_error_line)
             .children(replace_line)
     }
 }
@@ -728,7 +764,7 @@ impl BufferSearchBar {
             configured_options: search_options,
             search_options,
             pending_search: None,
-            query_contains_error: false,
+            query_error: None,
             dismissed: true,
             search_history: SearchHistory::new(
                 Some(MAX_BUFFER_SEARCH_HISTORY_SIZE),
@@ -1230,7 +1266,7 @@ impl BufferSearchBar {
         self.pending_search.take();
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
-            self.query_contains_error = false;
+            self.query_error = None;
             if query.is_empty() {
                 self.clear_active_searchable_item_matches(window, cx);
                 let _ = done_tx.send(());
@@ -1255,8 +1291,8 @@ impl BufferSearchBar {
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
-                            Err(_) => {
-                                self.query_contains_error = true;
+                            Err(e) => {
+                                self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
                                 cx.notify();
                                 return done_rx;
@@ -1274,8 +1310,8 @@ impl BufferSearchBar {
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
-                            Err(_) => {
-                                self.query_contains_error = true;
+                            Err(e) => {
+                                self.query_error = Some(e.to_string());
                                 self.clear_active_searchable_item_matches(window, cx);
                                 cx.notify();
                                 return done_rx;
