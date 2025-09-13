@@ -62,6 +62,39 @@ use workspace::{
     register_project_item,
 };
 
+/// Enable testing with both clip enabled and disabled.
+macro_rules! test_with_clip_modes {
+    ($test_name:ident) => {
+        paste::paste! {
+            #[gpui::test]
+            fn [<$test_name _no_clip>](cx: &mut TestAppContext) {
+                $test_name(cx, false);
+            }
+
+            #[gpui::test]
+            fn [<$test_name _with_clip>](cx: &mut TestAppContext) {
+                $test_name(cx, true);
+            }
+        }
+    };
+}
+
+macro_rules! async_test_with_clip_modes {
+    ($test_name:ident) => {
+        paste::paste! {
+            #[gpui::test]
+            async fn [<$test_name _no_clip>](cx: &mut TestAppContext) {
+                $test_name(cx, false).await;
+            }
+
+            #[gpui::test]
+            async fn [<$test_name _with_clip>](cx: &mut TestAppContext) {
+                $test_name(cx, true).await;
+            }
+        }
+    };
+}
+
 #[gpui::test]
 fn test_edit_events(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
@@ -191,8 +224,8 @@ fn test_edit_events(cx: &mut TestAppContext) {
     assert_eq!(mem::take(&mut *events.borrow_mut()), []);
 }
 
-#[gpui::test]
-fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_undo_redo_with_selection_restoration);
+fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let mut now = Instant::now();
@@ -203,7 +236,8 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         buf
     });
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    let editor =
+        cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx, clip_at_line_ends));
 
     _ = editor.update(cx, |editor, window, cx| {
         editor.start_transaction_at(now, window, cx);
@@ -272,8 +306,8 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_ime_composition(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_ime_composition);
+fn test_ime_composition(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let buffer = cx.new(|cx| {
@@ -285,7 +319,7 @@ fn test_ime_composition(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     cx.add_window(|window, cx| {
-        let mut editor = build_editor(buffer.clone(), window, cx);
+        let mut editor = build_editor(buffer.clone(), window, cx, clip_at_line_ends);
 
         // Start a new IME composition.
         editor.replace_and_mark_text_in_range(Some(0..1), "à", None, window, cx);
@@ -375,13 +409,13 @@ fn test_ime_composition(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_selection_with_mouse(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_selection_with_mouse);
+fn test_selection_with_mouse(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -479,13 +513,13 @@ fn test_selection_with_mouse(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_multiple_cursor_removal);
+fn test_multiple_cursor_removal(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -530,13 +564,13 @@ fn test_multiple_cursor_removal(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn test_canceling_pending_selection(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_canceling_pending_selection);
+fn test_canceling_pending_selection(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -577,13 +611,13 @@ fn test_canceling_pending_selection(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_movement_actions_with_pending_selection);
+fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -613,8 +647,8 @@ fn test_movement_actions_with_pending_selection(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_clone(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_clone);
+fn test_clone(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let (text, selection_ranges) = marked_text_ranges(
@@ -630,7 +664,7 @@ fn test_clone(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&text, cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -694,8 +728,8 @@ fn test_clone(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_navigation_history(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_navigation_history);
+async fn test_navigation_history(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     use workspace::item::Item;
@@ -710,7 +744,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
     _ = workspace.update(cx, |_v, window, cx| {
         cx.new(|cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
-            let mut editor = build_editor(buffer, window, cx);
+            let mut editor = build_editor(buffer, window, cx, clip_at_line_ends);
             let handle = cx.entity();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
@@ -819,13 +853,13 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_cancel(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_cancel);
+fn test_cancel(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\ndddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -874,16 +908,14 @@ fn test_cancel(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_fold_action(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_fold_action);
+fn test_fold_action(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(
-            &"
+            &"\
                 impl Foo {
-                    // Hello!
-
                     fn a() {
                         1
                     }
@@ -896,11 +928,11 @@ fn test_fold_action(cx: &mut TestAppContext) {
                         3
                     }
                 }
-            "
+                "
             .unindent(),
             cx,
         );
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -969,29 +1001,29 @@ fn test_fold_action(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_fold_action_whitespace_sensitive_language);
+fn test_fold_action_whitespace_sensitive_language(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(
-            &"
-                class Foo:
-                    # Hello!
+            &"\
+                def a():
+                    print(1)
 
-                    def a():
-                        print(1)
+                def b():
+                    print(2)
 
-                    def b():
-                        print(2)
-
-                    def c():
-                        print(3)
-            "
+                def c():
+                    print(3)
+                "
             .unindent(),
             cx,
         );
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1051,8 +1083,8 @@ fn test_fold_action_whitespace_sensitive_language(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_fold_action_multiple_line_breaks);
+fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -1076,7 +1108,7 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
             .unindent(),
             cx,
         );
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1144,8 +1176,8 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_fold_at_level(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_fold_at_level);
+fn test_fold_at_level(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -1175,7 +1207,7 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
             .unindent(),
             cx,
         );
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1253,12 +1285,13 @@ fn test_fold_at_level(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_cursor(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_cursor);
+fn test_move_cursor(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&sample_text(6, 6, 'a'), cx));
-    let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    let editor =
+        cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx, clip_at_line_ends));
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit(
@@ -1331,13 +1364,13 @@ fn test_move_cursor(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_cursor_multibyte);
+fn test_move_cursor_multibyte(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("🟥🟧🟨🟩🟦🟪\nabcde\nαβγδε", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     assert_eq!('🟥'.len_utf8(), 4);
@@ -1448,13 +1481,13 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_cursor_different_line_lengths);
+fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcd\nαβγ\nabcd\nⓐⓑⓒⓓⓔ\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1526,8 +1559,8 @@ fn test_move_cursor_different_line_lengths(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_beginning_end_of_line(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_beginning_end_of_line);
+fn test_beginning_end_of_line(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: true,
@@ -1544,7 +1577,7 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -1708,8 +1741,43 @@ fn test_beginning_end_of_line(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_end_of_line);
+fn test_end_of_line(cx: &mut TestAppContext, clip_at_line_ends: bool) {
+    init_test(cx, |_| {});
+
+    let editor = cx.add_window(|window, cx| {
+        let buffer = MultiBuffer::build_simple("asdf", cx);
+        build_editor(buffer, window, cx, clip_at_line_ends)
+    });
+    _ = editor.update(cx, |editor, window, cx| {
+        // pretend vim normal mode is active
+        editor.set_clip_at_line_ends(true, cx);
+
+        editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
+            s.select_display_ranges([
+                DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 0)
+            ]);
+        });
+    });
+
+    // Select to the end of the line.
+    _ = editor.update(cx, |editor, window, cx| {
+        editor.select_to_end_of_line(
+            &SelectToEndOfLine {
+                stop_at_soft_wraps: true,
+            },
+            window,
+            cx,
+        );
+        assert_eq!(
+            editor.selections.display_ranges(cx),
+            &[DisplayPoint::new(DisplayRow(0), 0)..DisplayPoint::new(DisplayRow(0), 4)]
+        );
+    });
+}
+
+test_with_clip_modes!(test_beginning_end_of_line_ignore_soft_wrap);
+fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
     let move_to_beg = MoveToBeginningOfLine {
         stop_at_soft_wraps: false,
@@ -1722,7 +1790,7 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("thequickbrownfox\njumpedoverthelazydogs", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1802,8 +1870,8 @@ fn test_beginning_end_of_line_ignore_soft_wrap(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_beginning_of_line_stop_at_indent);
+fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let move_to_beg = MoveToBeginningOfLine {
@@ -1826,7 +1894,7 @@ fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\n  def", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1903,8 +1971,11 @@ fn test_beginning_of_line_stop_at_indent(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_beginning_of_line_with_cursor_between_line_start_and_indent(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_beginning_of_line_with_cursor_between_line_start_and_indent);
+fn test_beginning_of_line_with_cursor_between_line_start_and_indent(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let move_to_beg = MoveToBeginningOfLine {
@@ -1914,7 +1985,7 @@ fn test_beginning_of_line_with_cursor_between_line_start_and_indent(cx: &mut Tes
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("    hello\nworld", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -1948,13 +2019,13 @@ fn test_beginning_of_line_with_cursor_between_line_start_and_indent(cx: &mut Tes
     });
 }
 
-#[gpui::test]
-fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_prev_next_word_boundary);
+fn test_prev_next_word_boundary(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("use std::str::{foo, bar}\n\n  {baz.qux()}", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -2011,13 +2082,13 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_prev_next_word_bounds_with_soft_wrap);
+fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("use one::{\n    two::three::four::five\n};", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2071,8 +2142,11 @@ fn test_prev_next_word_bounds_with_soft_wrap(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_move_start_of_paragraph_end_of_paragraph);
+async fn test_move_start_of_paragraph_end_of_paragraph(
+    cx: &mut TestAppContext,
+    _clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
@@ -2333,8 +2407,8 @@ async fn test_autoscroll(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_move_page_up_page_down(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_move_page_up_page_down);
+async fn test_move_page_up_page_down(cx: &mut TestAppContext, _clip_at_line_ends: bool) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
@@ -2851,13 +2925,13 @@ async fn test_delete_to_bracket(cx: &mut TestAppContext) {
     cx.assert_editor_state(r#"macroˇCOMMENT");"#);
 }
 
-#[gpui::test]
-fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_delete_to_previous_word_start_or_newline);
+fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("one\n2\nthree\n4", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     let del_to_prev_word_start = DeleteToPreviousWordStart {
         ignore_newlines: false,
@@ -2889,13 +2963,13 @@ fn test_delete_to_previous_word_start_or_newline(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_delete_to_next_word_end_or_newline);
+fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("\none\n   two\nthree\n   four", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     let del_to_next_word_end = DeleteToNextWordEnd {
         ignore_newlines: false,
@@ -2938,13 +3012,13 @@ fn test_delete_to_next_word_end_or_newline(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_newline(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_newline);
+fn test_newline(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaa\n    bbbb\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -2961,8 +3035,8 @@ fn test_newline(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_newline_with_old_selections(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_newline_with_old_selections);
+fn test_newline_with_old_selections(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
@@ -2980,7 +3054,7 @@ fn test_newline_with_old_selections(cx: &mut TestAppContext) {
             .as_str(),
             cx,
         );
-        let mut editor = build_editor(buffer, window, cx);
+        let mut editor = build_editor(buffer, window, cx, clip_at_line_ends);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([
                 Point::new(2, 4)..Point::new(2, 5),
@@ -3505,13 +3579,13 @@ async fn test_newline_comments_with_block_comment(cx: &mut TestAppContext) {
     "});
 }
 
-#[gpui::test]
-fn test_insert_with_old_selections(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_insert_with_old_selections);
+fn test_insert_with_old_selections(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("a( X ), b( Y ), c( Z )", cx);
-        let mut editor = build_editor(buffer, window, cx);
+        let mut editor = build_editor(buffer, window, cx, clip_at_line_ends);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([3..4, 11..12, 19..20])
         });
@@ -4053,8 +4127,8 @@ async fn test_indent_outdent_with_hard_tabs(cx: &mut TestAppContext) {
     "});
 }
 
-#[gpui::test]
-fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_indent_outdent_with_excerpts);
+fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.languages.0.extend([
             (
@@ -4109,7 +4183,7 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
     });
 
     cx.add_window(|window, cx| {
-        let mut editor = build_editor(multibuffer, window, cx);
+        let mut editor = build_editor(multibuffer, window, cx, clip_at_line_ends);
 
         assert_eq!(
             editor.text(cx),
@@ -4216,13 +4290,13 @@ async fn test_delete(cx: &mut TestAppContext) {
     "});
 }
 
-#[gpui::test]
-fn test_delete_line(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_delete_line);
+fn test_delete_line(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -4245,7 +4319,7 @@ fn test_delete_line(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -4262,13 +4336,13 @@ fn test_delete_line(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_join_lines_with_single_selection);
+fn test_join_lines_with_single_selection(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
-        let mut editor = build_editor(buffer.clone(), window, cx);
+        let mut editor = build_editor(buffer.clone(), window, cx, clip_at_line_ends);
         let buffer = buffer.read(cx).as_singleton().unwrap();
 
         assert_eq!(
@@ -4362,13 +4436,13 @@ fn test_join_lines_with_single_selection(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_join_lines_with_multi_selection(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_join_lines_with_multi_selection);
+fn test_join_lines_with_multi_selection(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaa\nbbb\nccc\nddd\n\n", cx);
-        let mut editor = build_editor(buffer.clone(), window, cx);
+        let mut editor = build_editor(buffer.clone(), window, cx, clip_at_line_ends);
         let buffer = buffer.read(cx).as_singleton().unwrap();
 
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5379,13 +5453,13 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 }
 
-#[gpui::test]
-fn test_duplicate_line(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_duplicate_line);
+fn test_duplicate_line(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5411,7 +5485,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5435,7 +5509,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     // the lines inserted above them
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5461,7 +5535,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5483,7 +5557,7 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\ndef\nghi\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -5504,13 +5578,13 @@ fn test_duplicate_line(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_line_up_down(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_line_up_down);
+fn test_move_line_up_down(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.fold_creases(
@@ -5604,12 +5678,12 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_line_up_selection_at_end_of_fold);
+fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("\n\n\n\n\n\naaaa\nbbbb\ncccc", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.fold_creases(
@@ -5631,13 +5705,13 @@ fn test_move_line_up_selection_at_end_of_fold(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_move_line_up_down_with_blocks);
+fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(10, 5, 'a'), cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         let snapshot = editor.buffer.read(cx).snapshot(cx);
@@ -5729,12 +5803,17 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn test_transpose(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_transpose);
+fn test_transpose(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     _ = cx.add_window(|window, cx| {
-        let mut editor = build_editor(MultiBuffer::build_simple("abc", cx), window, cx);
+        let mut editor = build_editor(
+            MultiBuffer::build_simple("abc", cx),
+            window,
+            cx,
+            clip_at_line_ends,
+        );
         editor.set_style(EditorStyle::default(), window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([1..1])
@@ -5755,7 +5834,12 @@ fn test_transpose(cx: &mut TestAppContext) {
     });
 
     _ = cx.add_window(|window, cx| {
-        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), window, cx);
+        let mut editor = build_editor(
+            MultiBuffer::build_simple("abc\nde", cx),
+            window,
+            cx,
+            clip_at_line_ends,
+        );
         editor.set_style(EditorStyle::default(), window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([3..3])
@@ -5783,7 +5867,12 @@ fn test_transpose(cx: &mut TestAppContext) {
     });
 
     _ = cx.add_window(|window, cx| {
-        let mut editor = build_editor(MultiBuffer::build_simple("abc\nde", cx), window, cx);
+        let mut editor = build_editor(
+            MultiBuffer::build_simple("abc\nde", cx),
+            window,
+            cx,
+            clip_at_line_ends,
+        );
         editor.set_style(EditorStyle::default(), window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([1..1, 2..2, 4..4])
@@ -5812,7 +5901,12 @@ fn test_transpose(cx: &mut TestAppContext) {
     });
 
     _ = cx.add_window(|window, cx| {
-        let mut editor = build_editor(MultiBuffer::build_simple("🍐🏀✋", cx), window, cx);
+        let mut editor = build_editor(
+            MultiBuffer::build_simple("🍐🏀✋", cx),
+            window,
+            cx,
+            clip_at_line_ends,
+        );
         editor.set_style(EditorStyle::default(), window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([4..4])
@@ -7262,13 +7356,13 @@ async fn test_paste_content_from_other_app(cx: &mut TestAppContext) {
     "});
 }
 
-#[gpui::test]
-fn test_select_all(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_select_all);
+fn test_select_all(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("abc\nde\nfgh", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.select_all(&SelectAll, window, cx);
@@ -7279,13 +7373,13 @@ fn test_select_all(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_select_line(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_select_line);
+fn test_select_line(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(6, 5, 'a'), cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
     _ = editor.update(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -7387,13 +7481,16 @@ async fn test_split_selection_into_lines(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_split_selection_into_lines_interacting_with_creases(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_split_selection_into_lines_interacting_with_creases);
+async fn test_split_selection_into_lines_interacting_with_creases(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(9, 5, 'a'), cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     // setup
@@ -8518,8 +8615,8 @@ async fn test_select_previous_with_single_selection(cx: &mut TestAppContext) {
     cx.assert_editor_state("«ˇabc»\n«ˇabc» «ˇabc»\ndef«ˇabc»\n«ˇabc»");
 }
 
-#[gpui::test]
-async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_select_larger_smaller_syntax_node);
+async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -8538,7 +8635,8 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
@@ -8706,8 +8804,11 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_select_larger_syntax_node_for_cursor_at_end);
+async fn test_select_larger_syntax_node_for_cursor_at_end(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -8719,7 +8820,8 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
@@ -8768,8 +8870,11 @@ async fn test_select_larger_syntax_node_for_cursor_at_end(cx: &mut TestAppContex
     });
 }
 
-#[gpui::test]
-async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_select_larger_syntax_node_for_cursor_at_symbol);
+async fn test_select_larger_syntax_node_for_cursor_at_symbol(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -8789,7 +8894,8 @@ async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppCon
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
@@ -8946,8 +9052,11 @@ async fn test_select_larger_syntax_node_for_cursor_at_symbol(cx: &mut TestAppCon
     });
 }
 
-#[gpui::test]
-async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_select_larger_smaller_syntax_node_for_string);
+async fn test_select_larger_smaller_syntax_node_for_string(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -8966,7 +9075,8 @@ async fn test_select_larger_smaller_syntax_node_for_string(cx: &mut TestAppConte
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
@@ -9252,8 +9362,8 @@ async fn test_fold_function_bodies(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_autoindent(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_autoindent);
+async fn test_autoindent(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(
@@ -9295,7 +9405,8 @@ async fn test_autoindent(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -9317,8 +9428,8 @@ async fn test_autoindent(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_autoindent_disabled(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_autoindent_disabled);
+async fn test_autoindent_disabled(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| settings.defaults.auto_indent = Some(false));
 
     let language = Arc::new(
@@ -9360,7 +9471,8 @@ async fn test_autoindent_disabled(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -10251,8 +10363,8 @@ async fn test_autoclose_with_overrides(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_surround_with_pair(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_surround_with_pair);
+async fn test_surround_with_pair(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -10290,7 +10402,8 @@ async fn test_surround_with_pair(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -10409,8 +10522,8 @@ async fn test_surround_with_pair(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_delete_autoclose_pair(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_delete_autoclose_pair);
+async fn test_delete_autoclose_pair(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -10440,7 +10553,8 @@ async fn test_delete_autoclose_pair(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -10619,8 +10733,8 @@ async fn test_always_treat_brackets_as_autoclosed_delete(cx: &mut TestAppContext
     );
 }
 
-#[gpui::test]
-async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_auto_replace_emoji_shortcode);
+async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -10630,7 +10744,8 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local("", cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -10688,8 +10803,8 @@ async fn test_auto_replace_emoji_shortcode(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_snippet_placeholder_choices);
+async fn test_snippet_placeholder_choices(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let (text, insertion_ranges) = marked_text_ranges(
@@ -10700,7 +10815,8 @@ async fn test_snippet_placeholder_choices(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.update(|cx| MultiBuffer::build_simple(&text, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     _ = editor.update_in(cx, |editor, window, cx| {
         let snippet = Snippet::parse("type ${1|,i32,u32|} = $2").unwrap();
@@ -10850,8 +10966,8 @@ async fn test_snippet_indentation(cx: &mut TestAppContext) {
         ˇ"});
 }
 
-#[gpui::test]
-async fn test_document_format_during_save(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_document_format_during_save);
+async fn test_document_format_during_save(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -10881,7 +10997,7 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
@@ -11010,8 +11126,8 @@ async fn test_document_format_during_save(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test]
-async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_redo_after_noop_format);
+async fn test_redo_after_noop_format(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.defaults.ensure_final_newline_on_save = Some(false);
     });
@@ -11030,7 +11146,7 @@ async fn test_redo_after_noop_format(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.change_selections(SelectionEffects::default(), window, cx, |s| {
@@ -11465,6 +11581,7 @@ async fn test_autosave_with_dirty_buffers(cx: &mut TestAppContext) {
 
 async fn setup_range_format_test(
     cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
 ) -> (
     Entity<Project>,
     Entity<Editor>,
@@ -11500,7 +11617,7 @@ async fn setup_range_format_test(
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
 
     cx.executor().start_waiting();
@@ -11509,9 +11626,9 @@ async fn setup_range_format_test(
     (project, editor, cx, fake_server)
 }
 
-#[gpui::test]
-async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+async_test_with_clip_modes!(test_range_format_on_save_success);
+async fn test_range_format_on_save_success(cx: &mut TestAppContext, clip_at_line_ends: bool) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx, clip_at_line_ends).await;
 
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
@@ -11554,9 +11671,9 @@ async fn test_range_format_on_save_success(cx: &mut TestAppContext) {
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 }
 
-#[gpui::test]
-async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+async_test_with_clip_modes!(test_range_format_on_save_failure);
+async fn test_range_format_on_save_failure(cx: &mut TestAppContext, clip_at_line_ends: bool) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx, clip_at_line_ends).await;
 
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
@@ -11597,9 +11714,12 @@ async fn test_range_format_on_save_timeout(cx: &mut TestAppContext) {
     assert!(!cx.read(|cx| editor.is_dirty(cx)));
 }
 
-#[gpui::test]
-async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+async_test_with_clip_modes!(test_range_format_not_called_for_clean_buffer);
+async fn test_range_format_not_called_for_clean_buffer(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx, clip_at_line_ends).await;
 
     // Buffer starts clean, no formatting should be requested
     let save = editor
@@ -11625,9 +11745,12 @@ async fn test_range_format_not_called_for_clean_buffer(cx: &mut TestAppContext) 
     cx.run_until_parked();
 }
 
-#[gpui::test]
-async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppContext) {
-    let (project, editor, cx, fake_server) = setup_range_format_test(cx).await;
+async_test_with_clip_modes!(test_range_format_respects_language_tab_size_override);
+async fn test_range_format_respects_language_tab_size_override(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
+    let (project, editor, cx, fake_server) = setup_range_format_test(cx, clip_at_line_ends).await;
 
     // Set Rust language override and assert overridden tabsize is sent to language server
     update_test_language_settings(cx, |settings| {
@@ -11671,8 +11794,8 @@ async fn test_range_format_respects_language_tab_size_override(cx: &mut TestAppC
     save.await;
 }
 
-#[gpui::test]
-async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_document_format_manual_trigger);
+async fn test_document_format_manual_trigger(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
             Formatter::LanguageServer { name: None },
@@ -11724,7 +11847,7 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text("one\ntwo\nthree\n", window, cx)
@@ -11799,8 +11922,8 @@ async fn test_document_format_manual_trigger(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_multiple_formatters(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_multiple_formatters);
+async fn test_multiple_formatters(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.defaults.remove_trailing_whitespace_on_save = Some(true);
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
@@ -11849,7 +11972,7 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
 
     cx.executor().start_waiting();
@@ -12062,8 +12185,8 @@ async fn test_multiple_formatters(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_organize_imports_manual_trigger);
+async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Vec(vec![
             Formatter::LanguageServer { name: None },
@@ -12113,7 +12236,7 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
     let (editor, cx) = cx.add_window_view(|window, cx| {
-        build_editor_with_project(project.clone(), buffer, window, cx)
+        build_editor_with_project(project.clone(), buffer, window, cx, clip_at_line_ends)
     });
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text(
@@ -12213,8 +12336,8 @@ async fn test_organize_imports_manual_trigger(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_concurrent_format_requests(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_concurrent_format_requests);
+async fn test_concurrent_format_requests(cx: &mut TestAppContext, _clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let mut cx = EditorLspTestContext::new_rust(
@@ -15699,8 +15822,8 @@ async fn test_toggle_block_comment(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_editing_disjoint_excerpts);
+fn test_editing_disjoint_excerpts(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
@@ -15718,7 +15841,8 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx, clip_at_line_ends));
     editor.update_in(cx, |editor, window, cx| {
         assert_eq!(editor.text(cx), "aaaa\nbbbb");
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
@@ -15761,8 +15885,8 @@ fn test_editing_disjoint_excerpts(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_editing_overlapping_excerpts);
+fn test_editing_overlapping_excerpts(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let markers = vec![('[', ']').into(), ('(', ')').into()];
@@ -15785,7 +15909,8 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
         multibuffer
     });
 
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(multibuffer, window, cx, clip_at_line_ends));
     editor.update_in(cx, |editor, window, cx| {
         let (expected_text, selection_ranges) = marked_text_ranges(
             indoc! {"
@@ -15834,8 +15959,8 @@ fn test_editing_overlapping_excerpts(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_refresh_selections(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_refresh_selections);
+fn test_refresh_selections(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
@@ -15858,7 +15983,7 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        let mut editor = build_editor(multibuffer.clone(), window, cx, clip_at_line_ends);
         let snapshot = editor.snapshot(window, cx);
         editor.change_selections(SelectionEffects::no_scroll(), window, cx, |s| {
             s.select_ranges([Point::new(1, 3)..Point::new(1, 3)])
@@ -15919,8 +16044,11 @@ fn test_refresh_selections(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_refresh_selections_while_selecting_with_mouse);
+fn test_refresh_selections_while_selecting_with_mouse(
+    cx: &mut TestAppContext,
+    clip_at_line_ends: bool,
+) {
     init_test(cx, |_| {});
 
     let buffer = cx.new(|cx| Buffer::local(sample_text(3, 4, 'a'), cx));
@@ -15943,7 +16071,7 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     });
 
     let editor = cx.add_window(|window, cx| {
-        let mut editor = build_editor(multibuffer.clone(), window, cx);
+        let mut editor = build_editor(multibuffer.clone(), window, cx, clip_at_line_ends);
         let snapshot = editor.snapshot(window, cx);
         editor.begin_selection(
             Point::new(1, 3).to_display_point(&snapshot),
@@ -15978,8 +16106,8 @@ fn test_refresh_selections_while_selecting_with_mouse(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_extra_newline_insertion);
+async fn test_extra_newline_insertion(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(
@@ -16022,7 +16150,8 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor
         .condition::<crate::EditorEvent>(cx, |editor, cx| !editor.buffer.read(cx).is_parsing(cx))
         .await;
@@ -16055,13 +16184,13 @@ async fn test_extra_newline_insertion(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-fn test_highlighted_ranges(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_highlighted_ranges);
+fn test_highlighted_ranges(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple(&sample_text(16, 8, 'a'), cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     _ = editor.update(cx, |editor, window, cx| {
@@ -16135,8 +16264,8 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui::test]
-async fn test_following(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_following);
+async fn test_following(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -16146,7 +16275,8 @@ async fn test_following(cx: &mut TestAppContext) {
         let buffer = project.create_local_buffer(&sample_text(16, 8, 'a'), None, false, cx);
         cx.new(|cx| MultiBuffer::singleton(buffer, cx))
     });
-    let leader = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+    let leader =
+        cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx, clip_at_line_ends));
     let follower = cx.update(|cx| {
         cx.open_window(
             WindowOptions {
@@ -16156,7 +16286,7 @@ async fn test_following(cx: &mut TestAppContext) {
                 ))),
                 ..Default::default()
             },
-            |window, cx| cx.new(|cx| build_editor(buffer.clone(), window, cx)),
+            |window, cx| cx.new(|cx| build_editor(buffer.clone(), window, cx, clip_at_line_ends)),
         )
         .unwrap()
     });
@@ -16337,8 +16467,8 @@ async fn test_following(cx: &mut TestAppContext) {
     assert!(!(*is_still_following.borrow()));
 }
 
-#[gpui::test]
-async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_following_with_multiple_excerpts);
+async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -16352,7 +16482,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let leader = pane.update_in(cx, |_, window, cx| {
         let multibuffer = cx.new(|_| MultiBuffer::new(ReadWrite));
-        cx.new(|cx| build_editor(multibuffer.clone(), window, cx))
+        cx.new(|cx| build_editor(multibuffer.clone(), window, cx, clip_at_line_ends))
     });
 
     // Start following the editor when it has no excerpts.
@@ -17965,8 +18095,8 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
     entries.iter().map(|mat| mat.string.clone()).collect()
 }
 
-#[gpui::test]
-async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_document_format_with_prettier);
+async fn test_document_format_with_prettier(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(SelectedFormatter::List(FormatterList::Single(
             Formatter::Prettier,
@@ -18016,7 +18146,8 @@ async fn test_document_format_with_prettier(cx: &mut TestAppContext) {
 
     let buffer_text = "one\ntwo\nthree\n";
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
     editor.update_in(cx, |editor, window, cx| {
         editor.set_text(buffer_text, window, cx)
     });
@@ -18463,8 +18594,8 @@ struct Row10;"#};
     );
 }
 
-#[gpui::test]
-async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_multibuffer_reverts);
+async fn test_multibuffer_reverts(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let base_text_1 = "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\nhhhh\niiii\njjjj";
@@ -18514,8 +18645,9 @@ async fn test_multibuffer_reverts(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     let project = Project::test(fs, [path!("/").as_ref()], cx).await;
-    let (editor, cx) = cx
-        .add_window_view(|window, cx| build_editor_with_project(project, multibuffer, window, cx));
+    let (editor, cx) = cx.add_window_view(|window, cx| {
+        build_editor_with_project(project, multibuffer, window, cx, clip_at_line_ends)
+    });
     editor.update_in(cx, |editor, _window, cx| {
         for (buffer, diff_base) in [
             (buffer_1.clone(), base_text_1),
@@ -21027,13 +21159,15 @@ async fn test_partially_staged_hunk(cx: &mut TestAppContext) {
     "}));
 }
 
-#[gpui::test]
-fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
+test_with_clip_modes!(test_crease_insertion_and_rendering);
+fn test_crease_insertion_and_rendering(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
+
+    let (_text, _ranges) = marked_text_ranges("ˇaaaaaa\nˇbbbbbb\ncccccc\nˇddddddd\n", false);
 
     let editor = cx.add_window(|window, cx| {
         let buffer = MultiBuffer::build_simple("aaaaaa\nbbbbbb\ncccccc\nddddddd\n", cx);
-        build_editor(buffer, window, cx)
+        build_editor(buffer, window, cx, clip_at_line_ends)
     });
 
     let render_args = Arc::new(Mutex::new(None));
@@ -25713,8 +25847,8 @@ async fn test_non_utf_8_opens(cx: &mut TestAppContext) {
     );
 }
 
-#[gpui::test]
-async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
+async_test_with_clip_modes!(test_select_next_prev_syntax_node);
+async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext, clip_at_line_ends: bool) {
     init_test(cx, |_| {});
 
     let language = Arc::new(Language::new(
@@ -25738,7 +25872,8 @@ async fn test_select_next_prev_syntax_node(cx: &mut TestAppContext) {
 
     let buffer = cx.new(|cx| Buffer::local(text, cx).with_language(language, cx));
     let buffer = cx.new(|cx| MultiBuffer::singleton(buffer, cx));
-    let (editor, cx) = cx.add_window_view(|window, cx| build_editor(buffer, window, cx));
+    let (editor, cx) =
+        cx.add_window_view(|window, cx| build_editor(buffer, window, cx, clip_at_line_ends));
 
     // Wait for parsing to complete
     editor

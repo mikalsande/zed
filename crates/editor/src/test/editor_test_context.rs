@@ -63,6 +63,7 @@ impl EditorTestContext {
                 MultiBuffer::build_from_buffer(buffer, cx),
                 window,
                 cx,
+                false, // Default clip_at_line_ends value for test context
             );
 
             window.focus(&editor.focus_handle(cx));
@@ -125,7 +126,7 @@ impl EditorTestContext {
         });
 
         let editor = cx.add_window(|window, cx| {
-            let editor = build_editor(buffer, window, cx);
+            let editor = build_editor(buffer, window, cx, false);
             window.focus(&editor.focus_handle(cx));
 
             editor

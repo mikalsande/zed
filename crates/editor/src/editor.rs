@@ -13451,6 +13451,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let clip_at_line_end = self.display_map.read(cx).clip_at_line_ends;
+        self.set_clip_at_line_ends(false, cx);
+
         self.hide_mouse_cursor(HideMouseCursorOrigin::MovementAction, cx);
         self.change_selections(Default::default(), window, cx, |s| {
             s.move_heads_with(|map, head, _| {
@@ -13459,7 +13462,9 @@ impl Editor {
                     SelectionGoal::None,
                 )
             });
-        })
+        });
+
+        self.set_clip_at_line_ends(clip_at_line_end, cx);
     }
 
     pub fn delete_to_end_of_line(

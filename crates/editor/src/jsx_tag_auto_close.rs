@@ -786,8 +786,24 @@ mod jsx_tag_autoclose_tests {
         "<divˇfoobar" + ">" => "<div>ˇ</div>foobar"
     );
 
-    #[gpui::test]
-    async fn test_multibuffer(cx: &mut TestAppContext) {
+    macro_rules! async_test_with_clip_modes {
+        ($test_name:ident) => {
+            paste::paste! {
+                #[gpui::test]
+                async fn [<$test_name _no_clip>](cx: &mut TestAppContext) {
+                    $test_name(cx, false).await;
+                }
+
+                #[gpui::test]
+                async fn [<$test_name _with_clip>](cx: &mut TestAppContext) {
+                    $test_name(cx, true).await;
+                }
+            }
+        };
+    }
+
+    async_test_with_clip_modes!(test_multibuffer);
+    async fn test_multibuffer(cx: &mut TestAppContext, clip_at_line_ends: bool) {
         init_test(cx, |settings| {
             settings.defaults.jsx_tag_auto_close = Some(JsxTagAutoCloseSettings { enabled: true });
         });
@@ -828,7 +844,8 @@ mod jsx_tag_autoclose_tests {
             );
             buf
         });
-        let editor = cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx));
+        let editor =
+            cx.add_window(|window, cx| build_editor(buffer.clone(), window, cx, clip_at_line_ends));
 
         let mut cx = EditorTestContext::for_editor(editor, cx).await;
 

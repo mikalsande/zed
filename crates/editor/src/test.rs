@@ -121,8 +121,11 @@ pub(crate) fn build_editor(
     buffer: Entity<MultiBuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,
+    clip_at_line_ends: bool,
 ) -> Editor {
-    Editor::new(EditorMode::full(), buffer, None, window, cx)
+    let mut editor = Editor::new(EditorMode::full(), buffer, None, window, cx);
+    editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+    editor
 }
 
 pub(crate) fn build_editor_with_project(
@@ -130,8 +133,11 @@ pub(crate) fn build_editor_with_project(
     buffer: Entity<MultiBuffer>,
     window: &mut Window,
     cx: &mut Context<Editor>,
+    clip_at_line_ends: bool,
 ) -> Editor {
-    Editor::new(EditorMode::full(), buffer, Some(project), window, cx)
+    let mut editor = Editor::new(EditorMode::full(), buffer, Some(project), window, cx);
+    editor.set_clip_at_line_ends(clip_at_line_ends, cx);
+    editor
 }
 
 #[derive(Default)]

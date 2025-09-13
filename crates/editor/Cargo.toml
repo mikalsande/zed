@@ -120,6 +120,7 @@ util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 zlog.workspace = true
+paste = "1.0.15"
 
 
 [[bench]]
