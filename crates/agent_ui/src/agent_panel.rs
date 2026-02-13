@@ -1,5 +1,7 @@
 use std::{ops::Range, path::Path, rc::Rc, sync::Arc, time::Duration};
 
+use terminal_view::TerminalView;
+
 use acp_thread::{AcpThread, AgentSessionInfo};
 use agent::{ContextServerRegistry, SharedThread, ThreadStore};
 use agent_client_protocol as acp;
@@ -289,6 +291,9 @@ enum ActiveView {
     AgentThread {
         thread_view: Entity<AcpServerView>,
     },
+    CliThread {
+        terminal_view: Entity<TerminalView>,
+    },
     TextThread {
         text_thread_editor: Entity<TextThreadEditor>,
         title_editor: Entity<Editor>,
@@ -362,7 +367,7 @@ impl ActiveView {
             | ActiveView::AgentThread { .. }
             | ActiveView::History { .. } => WhichFontSize::AgentFont,
             ActiveView::TextThread { .. } => WhichFontSize::BufferFont,
-            ActiveView::Configuration => WhichFontSize::None,
+            ActiveView::CliThread { .. } | ActiveView::Configuration => WhichFontSize::None,
         }
     }
 
@@ -839,6 +844,7 @@ impl AgentPanel {
         match &self.active_view {
             ActiveView::AgentThread { thread_view, .. } => Some(thread_view),
             ActiveView::Uninitialized
+            | ActiveView::CliThread { .. }
             | ActiveView::TextThread { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => None,
@@ -913,6 +919,77 @@ impl AgentPanel {
             cx,
         );
         text_thread_editor.focus_handle(cx).focus(window, cx);
+    }
+
+    fn cli_thread(
+        &mut self,
+        agent: &crate::ExternalAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((program, args)) = agent.cli_command() else {
+            return;
+        };
+        let cwd = self
+            .project
+            .read(cx)
+            .first_project_directory(cx);
+
+        let label = AgentType::from(agent.clone()).label();
+        let full_label = format!("{} (CLI)", label);
+
+        let spawn_task = task::SpawnInTerminal {
+            id: task::TaskId(format!("cli-agent-{}", program)),
+            full_label,
+            label: label.to_string(),
+            command: Some(program.to_string()),
+            args: args.into_iter().map(String::from).collect(),
+            command_label: program.to_string(),
+            cwd,
+            use_new_terminal: true,
+            allow_concurrent_runs: true,
+            show_summary: false,
+            show_command: false,
+            show_rerun: false,
+            ..Default::default()
+        };
+
+        let terminal_task = self
+            .project
+            .update(cx, |project, cx| project.create_terminal_task(spawn_task, cx));
+
+        let workspace = self.workspace.clone();
+        let project = self.project.downgrade();
+        let selected_agent = AgentType::from(agent.clone());
+
+        cx.spawn_in(window, async move |this, cx| {
+            let terminal = terminal_task.await?;
+            this.update_in(cx, |panel, window, cx| {
+                let Some(project) = project.upgrade() else {
+                    return;
+                };
+                let terminal_view = cx.new(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace,
+                        None,
+                        project.downgrade(),
+                        window,
+                        cx,
+                    )
+                });
+                panel.selected_agent = selected_agent;
+                panel.serialize(cx);
+                panel.set_active_view(
+                    ActiveView::CliThread { terminal_view },
+                    true,
+                    window,
+                    cx,
+                );
+            })?;
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn external_thread(
@@ -1130,6 +1207,9 @@ impl AgentPanel {
                     match &self.active_view {
                         ActiveView::AgentThread { thread_view } => {
                             thread_view.focus_handle(cx).focus(window, cx);
+                        }
+                        ActiveView::CliThread { terminal_view } => {
+                            terminal_view.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::TextThread {
                             text_thread_editor, ..
@@ -1590,6 +1670,11 @@ impl AgentPanel {
                     cx.notify();
                 }))
             }
+            ActiveView::CliThread { terminal_view } => {
+                Some(cx.observe(terminal_view, |_, _, cx| {
+                    cx.notify();
+                }))
+            }
             _ => None,
         };
 
@@ -1743,6 +1828,31 @@ impl AgentPanel {
         );
     }
 
+    fn is_cli_mode(&self, agent: &crate::ExternalAgent, cx: &App) -> bool {
+        let cli_mode_agents = &AgentSettings::get_global(cx).cli_mode_agents;
+        let agent_key = match agent {
+            crate::ExternalAgent::ClaudeCode => "claude_code",
+            crate::ExternalAgent::Codex => "codex",
+            crate::ExternalAgent::Gemini => "gemini",
+            crate::ExternalAgent::NativeAgent => return false,
+            crate::ExternalAgent::Custom { .. } => return false,
+        };
+        cli_mode_agents.iter().any(|a| a == agent_key)
+    }
+
+    fn external_or_cli_thread(
+        &mut self,
+        agent: crate::ExternalAgent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_cli_mode(&agent, cx) {
+            self.cli_thread(&agent, window, cx);
+        } else {
+            self.external_thread(Some(agent), None, None, window, cx);
+        }
+    }
+
     pub fn new_agent_thread(
         &mut self,
         agent: AgentType,
@@ -1761,23 +1871,17 @@ impl AgentPanel {
                 cx,
             ),
             AgentType::Gemini => {
-                self.external_thread(Some(crate::ExternalAgent::Gemini), None, None, window, cx)
+                self.external_or_cli_thread(crate::ExternalAgent::Gemini, window, cx);
             }
             AgentType::ClaudeCode => {
                 self.selected_agent = AgentType::ClaudeCode;
                 self.serialize(cx);
-                self.external_thread(
-                    Some(crate::ExternalAgent::ClaudeCode),
-                    None,
-                    None,
-                    window,
-                    cx,
-                )
+                self.external_or_cli_thread(crate::ExternalAgent::ClaudeCode, window, cx);
             }
             AgentType::Codex => {
                 self.selected_agent = AgentType::Codex;
                 self.serialize(cx);
-                self.external_thread(Some(crate::ExternalAgent::Codex), None, None, window, cx)
+                self.external_or_cli_thread(crate::ExternalAgent::Codex, window, cx);
             }
             AgentType::Custom { name } => self.external_thread(
                 Some(crate::ExternalAgent::Custom { name }),
@@ -1847,6 +1951,7 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::Uninitialized => self.focus_handle.clone(),
             ActiveView::AgentThread { thread_view, .. } => thread_view.focus_handle(cx),
+            ActiveView::CliThread { terminal_view } => terminal_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
                 HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
@@ -2074,6 +2179,10 @@ impl AgentPanel {
                         )
                         .into_any_element(),
                 }
+            }
+            ActiveView::CliThread { .. } => {
+                let label = format!("{} (CLI)", self.selected_agent.label());
+                Label::new(label).truncate().into_any_element()
             }
             ActiveView::History { kind } => {
                 let title = match kind {
@@ -2320,6 +2429,7 @@ impl AgentPanel {
         let active_thread = match &self.active_view {
             ActiveView::AgentThread { thread_view } => thread_view.read(cx).as_native_thread(cx),
             ActiveView::Uninitialized
+            | ActiveView::CliThread { .. }
             | ActiveView::TextThread { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => None,
@@ -2721,6 +2831,7 @@ impl AgentPanel {
             }
             ActiveView::Uninitialized
             | ActiveView::AgentThread { .. }
+            | ActiveView::CliThread { .. }
             | ActiveView::History { .. }
             | ActiveView::Configuration => return false,
         }
@@ -2749,9 +2860,10 @@ impl AgentPanel {
         }
 
         match &self.active_view {
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {
-                false
-            }
+            ActiveView::Uninitialized
+            | ActiveView::CliThread { .. }
+            | ActiveView::History { .. }
+            | ActiveView::Configuration => false,
             ActiveView::AgentThread { thread_view, .. }
                 if thread_view.read(cx).as_native_thread(cx).is_none() =>
             {
@@ -3043,7 +3155,10 @@ impl AgentPanel {
                     );
                 });
             }
-            ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
+            ActiveView::Uninitialized
+            | ActiveView::CliThread { .. }
+            | ActiveView::History { .. }
+            | ActiveView::Configuration => {}
         }
     }
 
@@ -3084,6 +3199,7 @@ impl AgentPanel {
         key_context.add("AgentPanel");
         match &self.active_view {
             ActiveView::AgentThread { .. } => key_context.add("acp_thread"),
+            ActiveView::CliThread { .. } => key_context.add("cli_thread"),
             ActiveView::TextThread { .. } => key_context.add("text_thread"),
             ActiveView::Uninitialized | ActiveView::History { .. } | ActiveView::Configuration => {}
         }
@@ -3147,6 +3263,9 @@ impl Render for AgentPanel {
                     ActiveView::AgentThread { thread_view, .. } => parent
                         .child(thread_view.clone())
                         .child(self.render_drag_target(cx)),
+                    ActiveView::CliThread { terminal_view } => {
+                        parent.child(terminal_view.clone())
+                    }
                     ActiveView::History { kind } => match kind {
                         HistoryKind::AgentThreads => parent.child(self.acp_history.clone()),
                         HistoryKind::TextThreads => parent.child(self.text_thread_history.clone()),
