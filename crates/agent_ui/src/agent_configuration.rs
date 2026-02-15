@@ -29,8 +29,8 @@ use language_models::AllLanguageModelSettings;
 use notifications::status_toast::{StatusToast, ToastIcon};
 use project::{
     agent_server_store::{
-        AgentServerStore, CLAUDE_CODE_NAME, CODEX_NAME, ExternalAgentServerName,
-        ExternalAgentSource, GEMINI_NAME,
+        AgentServerStore, AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME,
+        ExternalAgentServerName, ExternalAgentSource, GEMINI_NAME,
     },
     context_server_store::{ContextServerConfiguration, ContextServerStatus, ContextServerStore},
 };
@@ -1058,6 +1058,7 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiClaude),
                                 "Claude Code",
                                 "Claude Code",
+                                CLAUDE_CODE_NAME,
                                 ExternalAgentSource::Builtin,
                                 cx,
                             ))
@@ -1066,6 +1067,7 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiOpenAi),
                                 "Codex CLI",
                                 "Codex CLI",
+                                CODEX_NAME,
                                 ExternalAgentSource::Builtin,
                                 cx,
                             ))
@@ -1074,11 +1076,13 @@ impl AgentConfiguration {
                                 AgentIcon::Name(IconName::AiGemini),
                                 "Gemini CLI",
                                 "Gemini CLI",
+                                GEMINI_NAME,
                                 ExternalAgentSource::Builtin,
                                 cx,
                             ))
                             .map(|mut parent| {
                                 for (name, icon, display_name, source) in user_defined_agents {
+                                    let settings_key = name.0.clone();
                                     parent = parent
                                         .child(
                                             Divider::horizontal().color(DividerColor::BorderFaded),
@@ -1087,6 +1091,7 @@ impl AgentConfiguration {
                                             icon,
                                             name,
                                             display_name,
+                                            settings_key,
                                             source,
                                             cx,
                                         ));
@@ -1102,11 +1107,13 @@ impl AgentConfiguration {
         icon: AgentIcon,
         id: impl Into<SharedString>,
         display_name: impl Into<SharedString>,
+        settings_key: impl Into<SharedString>,
         source: ExternalAgentSource,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let id = id.into();
         let display_name = display_name.into();
+        let settings_key: SharedString = settings_key.into();
 
         let icon = match icon {
             AgentIcon::Name(icon_name) => Icon::new(icon_name)
@@ -1191,6 +1198,72 @@ impl AgentConfiguration {
             ExternalAgentSource::Builtin | ExternalAgentSource::Custom => None,
         };
 
+        let use_terminal = cx
+            .global::<SettingsStore>()
+            .get::<AllAgentServersSettings>(None)
+            .use_terminal(&settings_key);
+
+        let terminal_switch_id = SharedString::from(format!("use-terminal-{}", id));
+        let terminal_switch = {
+            let fs = self.fs.clone();
+            Switch::new(
+                terminal_switch_id.clone(),
+                if use_terminal {
+                    ToggleState::Selected
+                } else {
+                    ToggleState::Unselected
+                },
+            )
+            .on_click(move |state, _window, cx| {
+                let enabled = matches!(state, ToggleState::Selected);
+                let settings_key = settings_key.clone();
+                update_settings_file(fs.clone(), cx, move |settings, _| {
+                    match settings_key.as_ref() {
+                        CLAUDE_CODE_NAME => {
+                            settings
+                                .agent_servers
+                                .get_or_insert_default()
+                                .claude
+                                .get_or_insert_default()
+                                .use_terminal = Some(enabled);
+                        }
+                        GEMINI_NAME => {
+                            settings
+                                .agent_servers
+                                .get_or_insert_default()
+                                .gemini
+                                .get_or_insert_default()
+                                .use_terminal = Some(enabled);
+                        }
+                        CODEX_NAME => {
+                            settings
+                                .agent_servers
+                                .get_or_insert_default()
+                                .codex
+                                .get_or_insert_default()
+                                .use_terminal = Some(enabled);
+                        }
+                        custom_name => {
+                            if let Some(entry) = settings
+                                .agent_servers
+                                .get_or_insert_default()
+                                .custom
+                                .get_mut(custom_name)
+                            {
+                                if let settings::CustomAgentServerSettings::Custom {
+                                    use_terminal,
+                                    ..
+                                } = entry
+                                {
+                                    *use_terminal = Some(enabled);
+                                }
+                            }
+                        }
+                    }
+                });
+            })
+        };
+
         h_flex()
             .gap_1()
             .justify_between()
@@ -1214,9 +1287,26 @@ impl AgentConfiguration {
                             .size(IconSize::Small),
                     ),
             )
-            .when_some(uninstall_button, |this, uninstall_button| {
-                this.child(uninstall_button)
-            })
+            .child(
+                h_flex()
+                    .gap_1()
+                    .when(
+                        matches!(source, ExternalAgentSource::Builtin),
+                        |this| {
+                            this.child(
+                                div()
+                                    .id(terminal_switch_id)
+                                    .tooltip(Tooltip::text(
+                                        "Use CLI terminal instead of native UI",
+                                    ))
+                                    .child(terminal_switch),
+                            )
+                        },
+                    )
+                    .when_some(uninstall_button, |this, uninstall_button| {
+                        this.child(uninstall_button)
+                    }),
+            )
     }
 }
 
@@ -1388,6 +1478,7 @@ async fn open_new_agent_servers_entry_in_settings_editor(
                                 favorite_models: vec![],
                                 default_config_options: Default::default(),
                                 favorite_config_option_values: Default::default(),
+                                use_terminal: None,
                             },
                         );
                 }
