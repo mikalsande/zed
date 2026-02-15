@@ -577,7 +577,6 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions: Default::default(),
             show_turn_stats: false,
-            cli_mode_agents: vec![],
         };
 
         cx.update(|cx| {

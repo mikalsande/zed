@@ -111,15 +111,6 @@ pub struct AgentSettingsContent {
     ///
     /// Default: false
     pub show_turn_stats: Option<bool>,
-    /// List of external agents that should use CLI terminal mode instead of ACP.
-    /// When an agent is listed here, selecting it in the agent panel will open
-    /// its CLI directly in an embedded terminal instead of using the native UI.
-    ///
-    /// Valid values: "claude_code", "codex", "gemini"
-    ///
-    /// Default: []
-    #[serde(default)]
-    pub cli_mode_agents: Vec<String>,
     /// Per-tool permission rules for granular control over which tool actions
     /// require confirmation.
     ///
@@ -392,6 +383,11 @@ pub struct BuiltinAgentServerSettings {
     /// Default: {}
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
+    /// Whether to run this agent as a CLI in an embedded terminal instead
+    /// of using the native ACP UI.
+    ///
+    /// Default: false
+    pub use_terminal: Option<bool>,
 }
 
 #[with_fallible_options]
@@ -439,6 +435,11 @@ pub enum CustomAgentServerSettings {
         /// Default: {}
         #[serde(default, skip_serializing_if = "HashMap::is_empty")]
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        /// Whether to run this agent as a CLI in an embedded terminal instead
+        /// of using the native ACP UI.
+        ///
+        /// Default: false
+        use_terminal: Option<bool>,
     },
     Extension {
         /// Additional environment variables to pass to the agent.

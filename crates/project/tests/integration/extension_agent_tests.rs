@@ -311,6 +311,7 @@ fn test_tilde_expansion_in_settings() {
         favorite_models: vec![],
         default_config_options: Default::default(),
         favorite_config_option_values: Default::default(),
+        use_terminal: None,
     };
 
     let BuiltinAgentServerSettings { path, .. } = settings.into();
@@ -330,6 +331,7 @@ fn test_tilde_expansion_in_settings() {
         favorite_models: vec![],
         default_config_options: Default::default(),
         favorite_config_option_values: Default::default(),
+        use_terminal: None,
     };
 
     let converted: CustomAgentServerSettings = settings.into();

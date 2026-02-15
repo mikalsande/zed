@@ -560,7 +560,6 @@ mod tests {
             message_editor_min_lines: 1,
             tool_permissions,
             show_turn_stats: false,
-            cli_mode_agents: vec![],
         }
     }
 

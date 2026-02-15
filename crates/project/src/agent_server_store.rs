@@ -2264,6 +2264,18 @@ impl AllAgentServersSettings {
             .values()
             .any(|s| matches!(s, CustomAgentServerSettings::Registry { .. }))
     }
+
+    pub fn use_terminal(&self, agent_name: &str) -> bool {
+        match agent_name {
+            GEMINI_NAME => self.gemini.as_ref().is_some_and(|s| s.use_terminal),
+            CLAUDE_CODE_NAME => self.claude.as_ref().is_some_and(|s| s.use_terminal),
+            CODEX_NAME => self.codex.as_ref().is_some_and(|s| s.use_terminal),
+            name => self
+                .custom
+                .get(name)
+                .is_some_and(|s| s.use_terminal()),
+        }
+    }
 }
 
 #[derive(Default, Clone, JsonSchema, Debug, PartialEq)]
@@ -2277,6 +2289,7 @@ pub struct BuiltinAgentServerSettings {
     pub favorite_models: Vec<String>,
     pub default_config_options: HashMap<String, String>,
     pub favorite_config_option_values: HashMap<String, Vec<String>>,
+    pub use_terminal: bool,
 }
 
 impl BuiltinAgentServerSettings {
@@ -2304,6 +2317,7 @@ impl From<settings::BuiltinAgentServerSettings> for BuiltinAgentServerSettings {
             favorite_models: value.favorite_models,
             default_config_options: value.default_config_options,
             favorite_config_option_values: value.favorite_config_option_values,
+            use_terminal: value.use_terminal.unwrap_or(false),
         }
     }
 }
@@ -2351,6 +2365,7 @@ pub enum CustomAgentServerSettings {
         ///
         /// Default: {}
         favorite_config_option_values: HashMap<String, Vec<String>>,
+        use_terminal: bool,
     },
     Extension {
         /// Additional environment variables to pass to the agent.
@@ -2496,6 +2511,14 @@ impl CustomAgentServerSettings {
                 .map(|v| v.as_slice()),
         }
     }
+
+    pub fn use_terminal(&self) -> bool {
+        match self {
+            CustomAgentServerSettings::Custom { use_terminal, .. } => *use_terminal,
+            CustomAgentServerSettings::Extension { .. }
+            | CustomAgentServerSettings::Registry { .. } => false,
+        }
+    }
 }
 
 impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
@@ -2510,6 +2533,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_models,
                 default_config_options,
                 favorite_config_option_values,
+                use_terminal,
             } => CustomAgentServerSettings::Custom {
                 command: AgentServerCommand {
                     path: PathBuf::from(shellexpand::tilde(&path.to_string_lossy()).as_ref()),
@@ -2521,6 +2545,7 @@ impl From<settings::CustomAgentServerSettings> for CustomAgentServerSettings {
                 favorite_models,
                 default_config_options,
                 favorite_config_option_values,
+                use_terminal: use_terminal.unwrap_or(false),
             },
             settings::CustomAgentServerSettings::Extension {
                 env,

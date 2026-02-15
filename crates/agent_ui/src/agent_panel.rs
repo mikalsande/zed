@@ -9,7 +9,7 @@ use agent_servers::AgentServer;
 use db::kvp::{Dismissable, KEY_VALUE_STORE};
 use project::{
     ExternalAgentServerName,
-    agent_server_store::{CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
+    agent_server_store::{AllAgentServersSettings, CLAUDE_CODE_NAME, CODEX_NAME, GEMINI_NAME},
 };
 use serde::{Deserialize, Serialize};
 use settings::{LanguageModelProviderSetting, LanguageModelSelection};
@@ -71,6 +71,7 @@ use workspace::{
     CollaboratorId, DraggedSelection, DraggedTab, ToggleZoom, ToolbarItemView, Workspace,
     WorkspaceId,
     dock::{DockPosition, Panel, PanelEvent},
+    item::ItemEvent,
 };
 use zed_actions::{
     DecreaseBufferFontSize, IncreaseBufferFontSize, ResetBufferFontSize,
@@ -478,7 +479,7 @@ pub struct AgentPanel {
     focus_handle: FocusHandle,
     active_view: ActiveView,
     previous_view: Option<ActiveView>,
-    _active_view_observation: Option<Subscription>,
+    _active_view_subscriptions: Vec<Subscription>,
     new_thread_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_panel_menu_handle: PopoverMenuHandle<ContextMenu>,
     agent_navigation_menu_handle: PopoverMenuHandle<ContextMenu>,
@@ -754,7 +755,7 @@ impl AgentPanel {
             focus_handle: cx.focus_handle(),
             context_server_registry,
             previous_view: None,
-            _active_view_observation: None,
+            _active_view_subscriptions: Vec::new(),
             new_thread_menu_handle: PopoverMenuHandle::default(),
             agent_panel_menu_handle: PopoverMenuHandle::default(),
             agent_navigation_menu_handle: PopoverMenuHandle::default(),
@@ -1662,20 +1663,31 @@ impl AgentPanel {
             self.active_view = new_view;
         }
 
-        self._active_view_observation = match &self.active_view {
+        self._active_view_subscriptions = match &self.active_view {
             ActiveView::AgentThread { thread_view } => {
-                Some(cx.observe(thread_view, |this, _, cx| {
+                vec![cx.observe(thread_view, |this, _, cx| {
                     cx.emit(AgentPanelEvent::ActiveViewChanged);
                     this.serialize(cx);
                     cx.notify();
-                }))
+                })]
             }
             ActiveView::CliThread { terminal_view } => {
-                Some(cx.observe(terminal_view, |_, _, cx| {
-                    cx.notify();
-                }))
+                vec![
+                    cx.observe(terminal_view, |_, _, cx| {
+                        cx.notify();
+                    }),
+                    cx.subscribe_in(terminal_view, window, |this, _, event: &ItemEvent, window, cx| {
+                        if *event == ItemEvent::CloseItem {
+                            this.active_view = ActiveView::Uninitialized;
+                            this._active_view_subscriptions.clear();
+                            cx.emit(AgentPanelEvent::ActiveViewChanged);
+                            this.focus_handle.focus(window, cx);
+                            cx.notify();
+                        }
+                    }),
+                ]
             }
-            _ => None,
+            _ => Vec::new(),
         };
 
         if focus {
@@ -1829,15 +1841,22 @@ impl AgentPanel {
     }
 
     fn is_cli_mode(&self, agent: &crate::ExternalAgent, cx: &App) -> bool {
-        let cli_mode_agents = &AgentSettings::get_global(cx).cli_mode_agents;
-        let agent_key = match agent {
-            crate::ExternalAgent::ClaudeCode => "claude_code",
-            crate::ExternalAgent::Codex => "codex",
-            crate::ExternalAgent::Gemini => "gemini",
+        let agent_name = match agent {
+            crate::ExternalAgent::ClaudeCode => CLAUDE_CODE_NAME,
+            crate::ExternalAgent::Codex => CODEX_NAME,
+            crate::ExternalAgent::Gemini => GEMINI_NAME,
             crate::ExternalAgent::NativeAgent => return false,
-            crate::ExternalAgent::Custom { .. } => return false,
+            crate::ExternalAgent::Custom { name, .. } => {
+                let settings = cx
+                    .global::<settings::SettingsStore>()
+                    .get::<AllAgentServersSettings>(None);
+                return settings.custom.get(name.as_ref()).is_some_and(|s| s.use_terminal());
+            }
         };
-        cli_mode_agents.iter().any(|a| a == agent_key)
+        let settings = cx
+            .global::<settings::SettingsStore>()
+            .get::<AllAgentServersSettings>(None);
+        settings.use_terminal(agent_name)
     }
 
     fn external_or_cli_thread(
