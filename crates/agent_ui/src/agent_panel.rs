@@ -294,6 +294,7 @@ enum ActiveView {
     },
     CliThread {
         terminal_view: Entity<TerminalView>,
+        agent: crate::ExternalAgent,
     },
     TextThread {
         text_thread_editor: Entity<TextThreadEditor>,
@@ -493,6 +494,7 @@ pub struct AgentPanel {
     selected_agent: AgentType,
     show_trust_workspace_message: bool,
     last_configuration_error_telemetry: Option<String>,
+    _cli_restart_task: Option<Task<()>>,
 }
 
 impl AgentPanel {
@@ -772,6 +774,7 @@ impl AgentPanel {
             selected_agent: AgentType::default(),
             show_trust_workspace_message: false,
             last_configuration_error_telemetry: None,
+            _cli_restart_task: None,
         };
 
         // Initial sync of agent servers from extensions
@@ -962,6 +965,7 @@ impl AgentPanel {
         let workspace = self.workspace.clone();
         let project = self.project.downgrade();
         let selected_agent = AgentType::from(agent.clone());
+        let ext_agent = agent.clone();
 
         cx.spawn_in(window, async move |this, cx| {
             let terminal = terminal_task.await?;
@@ -982,7 +986,7 @@ impl AgentPanel {
                 panel.selected_agent = selected_agent;
                 panel.serialize(cx);
                 panel.set_active_view(
-                    ActiveView::CliThread { terminal_view },
+                    ActiveView::CliThread { terminal_view, agent: ext_agent },
                     true,
                     window,
                     cx,
@@ -1053,6 +1057,16 @@ impl AgentPanel {
                     }
                 }
             };
+
+            if resume_thread.is_none() && initial_content.is_none() {
+                let is_cli = this.read_with(cx, |panel, cx| panel.is_cli_mode(&ext_agent, cx))?;
+                if is_cli {
+                    this.update_in(cx, |panel, window, cx| {
+                        panel.cli_thread(&ext_agent, window, cx);
+                    })?;
+                    return anyhow::Ok(());
+                }
+            }
 
             let server = ext_agent.server(fs, thread_store);
             this.update_in(cx, |agent_panel, window, cx| {
@@ -1209,7 +1223,7 @@ impl AgentPanel {
                         ActiveView::AgentThread { thread_view } => {
                             thread_view.focus_handle(cx).focus(window, cx);
                         }
-                        ActiveView::CliThread { terminal_view } => {
+                        ActiveView::CliThread { terminal_view, .. } => {
                             terminal_view.focus_handle(cx).focus(window, cx);
                         }
                         ActiveView::TextThread {
@@ -1642,6 +1656,8 @@ impl AgentPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self._cli_restart_task = None;
+
         let current_is_uninitialized = matches!(self.active_view, ActiveView::Uninitialized);
         let current_is_history = matches!(self.active_view, ActiveView::History { .. });
         let new_is_history = matches!(new_view, ActiveView::History { .. });
@@ -1671,13 +1687,29 @@ impl AgentPanel {
                     cx.notify();
                 })]
             }
-            ActiveView::CliThread { terminal_view } => {
+            ActiveView::CliThread { terminal_view, agent } => {
+                let terminal = terminal_view.read(cx).terminal().clone();
+                let wait_task = terminal.read(cx).wait_for_completed_task(cx);
+                let agent = agent.clone();
+
+                let spawned_at = std::time::Instant::now();
+                self._cli_restart_task = Some(cx.spawn_in(window, async move |this, cx| {
+                    let _exit_status = wait_task.await;
+                    if spawned_at.elapsed() < Duration::from_secs(3) {
+                        return;
+                    }
+                    this.update_in(cx, |panel, window, cx| {
+                        panel.cli_thread(&agent, window, cx);
+                    }).log_err();
+                }));
+
                 vec![
                     cx.observe(terminal_view, |_, _, cx| {
                         cx.notify();
                     }),
                     cx.subscribe_in(terminal_view, window, |this, _, event: &ItemEvent, window, cx| {
                         if *event == ItemEvent::CloseItem {
+                            this._cli_restart_task = None;
                             this.active_view = ActiveView::Uninitialized;
                             this._active_view_subscriptions.clear();
                             cx.emit(AgentPanelEvent::ActiveViewChanged);
@@ -1970,7 +2002,7 @@ impl Focusable for AgentPanel {
         match &self.active_view {
             ActiveView::Uninitialized => self.focus_handle.clone(),
             ActiveView::AgentThread { thread_view, .. } => thread_view.focus_handle(cx),
-            ActiveView::CliThread { terminal_view } => terminal_view.focus_handle(cx),
+            ActiveView::CliThread { terminal_view, .. } => terminal_view.focus_handle(cx),
             ActiveView::History { kind } => match kind {
                 HistoryKind::AgentThreads => self.acp_history.focus_handle(cx),
                 HistoryKind::TextThreads => self.text_thread_history.focus_handle(cx),
@@ -3282,7 +3314,7 @@ impl Render for AgentPanel {
                     ActiveView::AgentThread { thread_view, .. } => parent
                         .child(thread_view.clone())
                         .child(self.render_drag_target(cx)),
-                    ActiveView::CliThread { terminal_view } => {
+                    ActiveView::CliThread { terminal_view, .. } => {
                         parent.child(terminal_view.clone())
                     }
                     ActiveView::History { kind } => match kind {
